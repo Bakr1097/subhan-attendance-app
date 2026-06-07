@@ -1,0 +1,17 @@
+{
+  "name": "Attendance Kiosk",
+  "short_name": "Kiosk",
+  "description": "Worker check-in/out kiosk for Subhan Terminal",
+  "start_url": "/kiosk",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    }
+  ]
+}
