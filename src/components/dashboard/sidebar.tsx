@@ -8,6 +8,7 @@ import {
   Layers,
   Clock,
   Users,
+  UserCog,
   CalendarDays,
   ClipboardList,
   BarChart3,
@@ -26,6 +27,7 @@ const NAV_ITEMS = [
   { label: "Attendance", href: "/dashboard/attendance", icon: ClipboardList, adminOnly: false },
   { label: "Reports", href: "/dashboard/reports", icon: BarChart3, adminOnly: false },
   { label: "Audit Log", href: "/dashboard/audit", icon: ScrollText, adminOnly: true },
+  { label: "Users", href: "/dashboard/users", icon: UserCog, adminOnly: true },
   { label: "Settings", href: "/dashboard/settings", icon: Settings, adminOnly: false },
 ];
 

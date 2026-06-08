@@ -187,10 +187,39 @@
 - Offline punch queue stores the plain 4-digit PIN in IDB (needed so the server can bcrypt-verify on sync); acceptable because IDB is origin-scoped and the kiosk is a controlled device
 - Worker cache in IDB is invalidated by date mismatch (not TTL) so midnight rollovers always pull a fresh list
 - `processingRef` (useRef) used as the double-invocation lock in `onPhotoCapture` rather than a state variable — refs are synchronous and bypass React's batched update queue
+- User scope stored in separate `supervisorScopes` table (not on `users` directly); each supervisor treated as having one scope in the UI (first row wins on read; all rows replaced on save)
+- `AlertDialogAction` (Radix) closes the dialog immediately on click — used a plain `Button` for async confirm actions to keep the dialog open until the server action resolves
+- Deactivated users are blocked at login (`isActive` check in `authorize` in `src/auth.ts`); existing JWT sessions remain valid until expiry (acceptable for a controlled-device deployment)
 
 ---
 
-## Next steps (Step 14)
+### Step 15 — User & Settings Management ✓
 
-**Vercel Deployment**:
-Set environment variables in Vercel dashboard, push to GitHub, connect repo, deploy, run DB migration, seed first admin user.
+- `/dashboard/users` — admin-only (non-admins redirect to `/dashboard`)
+- "Users" link added to sidebar between Audit Log and Settings (`UserCog` icon, `adminOnly: true`)
+- `isActive boolean not null default true` added to `users` table in schema; `src/auth.ts` updated to block inactive users at login
+- List all users: Name, Email, Role (purple/blue badge), Scope (terminal / dept or "All terminals" for admins), Created date, Active/Inactive badge
+- Inactive rows shown at 60% opacity with slate background; current user row labeled "(you)"
+- **Create user** dialog: name, email, password, role selector; scope fields (terminal + optional department) shown only when role = supervisor; email normalised to lowercase; password hashed with bcryptjs (12 rounds)
+- **Edit user** dialog: change name, email, role, scope; no password field; scope row replaced on save (delete + insert)
+- **Reset password**: separate dialog — admin sets new password; bcrypt-hashed and saved; no hashes in audit log
+- **Deactivate / Reactivate**: AlertDialog confirmation; deactivate button disabled for current user (self-lockout in UI + server)
+- **Self-lockout protection**: server blocks deactivating or demoting your own account with readable error
+- **Last-admin protection**: server blocks deactivating or demoting the last active admin ("Cannot remove the last active admin")
+- **Email uniqueness**: DB constraint caught and returned as "A user with that email already exists"
+- **Audit log**: `create_user / edit_user / reset_password / deactivate_user / reactivate_user`; `entityType = "user"`; password hashes never included in before/after JSON
+- All mutations admin-gated server-side
+- Build: 20 routes, compiles cleanly
+
+---
+
+### Step 14 — Vercel Deployment ✓
+
+- App live at **https://subhan-attendance-app.vercel.app**
+- GitHub repo: https://github.com/Bakr1097/subhan-attendance-app (branch: main)
+- Login, dashboard, and kiosk confirmed working in production
+- Environment variables set in Vercel dashboard; Neon DB migration run; first admin user seeded
+
+---
+
+## All 14 steps complete. App is in production.

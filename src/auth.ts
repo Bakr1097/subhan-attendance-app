@@ -24,6 +24,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           .limit(1);
 
         if (!user) return null;
+        if (!user.isActive) return null;
 
         const valid = await compare(
           credentials.password as string,
