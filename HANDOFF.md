@@ -261,4 +261,42 @@ Self-contained Node.js program in **`zkteco-bridge/`**, separate from the Next.j
 
 ---
 
-## All 16 steps complete (Part 1 + Part 2). App is in production; the biometric bridge is ready to install on the terminal PC.
+### Step 17 — Daily-Wage Payroll ✓
+
+**Pay model (deliberately simple, no hours-based tiers):**
+- Each worker is `payType` = `"daily"` (dihari) or `"monthly"` (salaried); default `"daily"`.
+- Daily workers earn a full day's wage if they have a check-in for the date (`attendance_records.checkInAt` set) — missing checkout does NOT reduce pay, it's just flagged for review.
+- No check-in for the date → absent → Rs 0 for that day.
+- An admin/supervisor can manually override a single day to "half day" (half the daily rate) via a toggle on the payroll report — this is a manual decision, never automatic. Monthly workers are excluded from payroll entirely (not tracked here).
+
+**Schema:**
+- `workers.payType` — text, `"daily"` / `"monthly"`, not null, default `"daily"`
+- `workers.dailyRate` — integer (whole rupees), nullable
+- New table `payroll_adjustments` (id, workerId, workDate, dayStatus `"full"`/`"half"`, actorUserId, createdAt/updatedAt), unique on (workerId, workDate); default (no row) = full day
+- Migration `drizzle/0002_daily_slayback.sql`, applied to the live Neon DB
+
+**Worker form:** "Pay Type" dropdown (Daily/Monthly) + "Daily Rate (PKR)" number input, shown/enabled only for Daily; wired through the existing `createWorker`/`updateWorker` actions.
+
+**`/dashboard/payroll` — "Daily Payroll":**
+- "Payroll" sidebar link between Reports and Audit Log (not admin-only — supervisors get scoped access, same pattern as Attendance)
+- Date navigator + terminal tabs, same UX as the Attendance page
+- Shows ONLY `payType = "daily"` workers for the selected terminal/date — monthly workers never appear here
+- Per-row: Code, Name, Dept, Daily Rate, Present? (Yes/No badge from `checkInAt`), Day Status (Full/Half toggle when present, "Absent" badge when not), Amount Payable
+- Missing-checkout workers still count present/full for pay, with an amber "⚠ missing checkout" note (checkoutMissing recomputed live, same `flagMissingCheckout` pattern as the Attendance page)
+- Summary bar: total daily workers · present · absent · half-days · **Total Payable** (large, its own callout box) · missing-checkout count
+- Download CSV: meta row (date, terminal), header, one row per worker, blank line, total payable row — same client-side pattern as the Reports CSV; filename `payroll-{date}.csv`
+
+**Half-day persistence:** the toggle calls `setDayStatus()` (`src/app/dashboard/payroll/actions.ts`), which upserts `payroll_adjustments` via `onConflictDoUpdate` and writes an `audit_log` row (`action: "payroll_adjust"`, `entityType: "payroll_adjustment"`, before/after `dayStatus`) — same audit pattern as attendance corrections. Note: the audit viewer's worker-name join only covers `entityType = "attendance_record"`, so `payroll_adjust` entries show without a worker name/date in the Audit Log table (existing generic-join limitation, not new); the action itself and its diff data are still fully recorded.
+
+**Dashboard today-strip (`/dashboard`):** a compact bar below the existing 3 stat cards — Present · Absent · Late · Missing checkout across **all terminals the current user can see** (scoped the same way as Attendance/Payroll: full visibility for admins, `supervisorScopes`-filtered for supervisors), plus **Today's Payable** total (admin-only) computed with the same present/half/absent logic as the Payroll page. Reuses `flagMissingCheckout` for live recomputation; no separate client component, just a server-rendered block.
+
+**Verified in a real browser session (logged in as admin via the seeded account):**
+- Dashboard Today-strip rendered correctly against live data (1 present, 0 absent, 0 late, 0 missing checkout, Today's Payable Rs 0)
+- `/dashboard/payroll` rendered correctly against the 6 existing real daily-pay workers (1 present, 5 absent, Rs 0 amounts since no `dailyRate` has been set yet on real workers) — confirms the present/absent/amount pipeline end-to-end
+- Did not exercise the half-day toggle interactively (would require a real browser click — Next.js server actions aren't easily driven via curl) or set a real `dailyRate` on a worker; recommend the user try both once in the browser
+
+- Build: 22 routes, compiles cleanly
+
+---
+
+## All 17 steps complete. App is in production with biometric device integration and daily-wage payroll.

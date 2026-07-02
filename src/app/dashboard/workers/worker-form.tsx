@@ -39,6 +39,8 @@ interface WorkerRow {
   phone: string | null;
   referencePhotoUrl: string | null;
   deviceUserId: string | null;
+  payType: "daily" | "monthly";
+  dailyRate: number | null;
 }
 
 interface Props {
@@ -118,6 +120,8 @@ export function WorkerForm({
       pin: "",
       referencePhotoUrl: worker?.referencePhotoUrl ?? "",
       deviceUserId: worker?.deviceUserId ?? "",
+      payType: worker?.payType ?? ("daily" as "daily" | "monthly"),
+      dailyRate: worker?.dailyRate != null ? String(worker.dailyRate) : "",
     };
   }
 
@@ -193,6 +197,8 @@ export function WorkerForm({
           phone: form.phone,
           referencePhotoUrl: form.referencePhotoUrl,
           deviceUserId: form.deviceUserId,
+          payType: form.payType,
+          dailyRate: form.dailyRate,
         };
 
         if (worker) {
@@ -308,6 +314,43 @@ export function WorkerForm({
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Pay type + daily rate */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Pay Type</Label>
+                <Select
+                  value={form.payType}
+                  onValueChange={(v) => set("payType", v as "daily" | "monthly")}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="daily">Daily</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="w-daily-rate">Daily Rate (PKR)</Label>
+                <Input
+                  id="w-daily-rate"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={form.dailyRate}
+                  onChange={(e) => set("dailyRate", e.target.value)}
+                  placeholder="e.g. 1000"
+                  disabled={form.payType !== "daily"}
+                />
+              </div>
+            </div>
+            {form.payType === "daily" && (
+              <p className="text-xs text-muted-foreground -mt-2">
+                Full day wage for this worker in rupees.
+              </p>
+            )}
 
             {/* Full name */}
             <div className="space-y-2">

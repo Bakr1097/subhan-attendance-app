@@ -115,6 +115,8 @@ export default async function WorkersPage({
       phone: workers.phone,
       referencePhotoUrl: workers.referencePhotoUrl,
       deviceUserId: workers.deviceUserId,
+      payType: workers.payType,
+      dailyRate: workers.dailyRate,
       deptName: departments.name,
       shiftName: shifts.name,
     })

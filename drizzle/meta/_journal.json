@@ -15,6 +15,13 @@
       "when": 1782986766368,
       "tag": "0001_chilly_molly_hayes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782992370707,
+      "tag": "0002_daily_slayback",
+      "breakpoints": true
     }
   ]
 }

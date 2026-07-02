@@ -80,6 +80,8 @@ export interface WorkerCreatePayload {
   phone: string;
   referencePhotoUrl: string;
   deviceUserId: string;
+  payType: "daily" | "monthly";
+  dailyRate: string;
 }
 
 export interface WorkerUpdatePayload {
@@ -91,6 +93,14 @@ export interface WorkerUpdatePayload {
   phone: string;
   referencePhotoUrl: string;
   deviceUserId: string;
+  payType: "daily" | "monthly";
+  dailyRate: string;
+}
+
+function resolveDailyRate(payType: "daily" | "monthly", dailyRate: string): number | null {
+  if (payType !== "daily") return null;
+  const n = parseInt(dailyRate, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
@@ -116,6 +126,8 @@ export async function createWorker(payload: WorkerCreatePayload) {
       phone: payload.phone.trim() || null,
       referencePhotoUrl: payload.referencePhotoUrl || null,
       deviceUserId: payload.deviceUserId.trim() || null,
+      payType: payload.payType,
+      dailyRate: resolveDailyRate(payload.payType, payload.dailyRate),
       status: "active",
     });
   } catch (e: unknown) {
@@ -152,6 +164,8 @@ export async function updateWorker(id: string, payload: WorkerUpdatePayload) {
     phone: payload.phone.trim() || null,
     referencePhotoUrl: payload.referencePhotoUrl || null,
     deviceUserId: payload.deviceUserId.trim() || null,
+    payType: payload.payType,
+    dailyRate: resolveDailyRate(payload.payType, payload.dailyRate),
   };
 
   // Only update PIN if a new one is provided

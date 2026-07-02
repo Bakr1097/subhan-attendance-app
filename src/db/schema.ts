@@ -81,6 +81,8 @@ export const workers = pgTable("workers", {
   referencePhotoUrl: text("reference_photo_url"),
   defaultShiftId: uuid("default_shift_id").references(() => shifts.id),
   deviceUserId: text("device_user_id").unique(),
+  payType: text("pay_type").$type<"daily" | "monthly">().notNull().default("daily"),
+  dailyRate: integer("daily_rate"),
   status: text("status").$type<"active" | "inactive">().notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
@@ -157,3 +159,23 @@ export const auditLog = pgTable("audit_log", {
   afterJson: jsonb("after_json"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
+
+export const payrollAdjustments = pgTable(
+  "payroll_adjustments",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    workerId: uuid("worker_id")
+      .notNull()
+      .references(() => workers.id),
+    workDate: date("work_date").notNull(),
+    dayStatus: text("day_status").$type<"full" | "half">().notNull().default("full"),
+    actorUserId: uuid("actor_user_id")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => ({
+    workerDateUnique: unique().on(t.workerId, t.workDate),
+  })
+);
