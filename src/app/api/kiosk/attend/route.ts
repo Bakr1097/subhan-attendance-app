@@ -1,20 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { compare } from "bcryptjs";
 import { db } from "@/lib/db";
-import {
-  workers,
-  shifts,
-  shiftAssignments,
-  attendanceRecords,
-} from "@/db/schema";
+import { workers, attendanceRecords } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { uploadToR2 } from "@/lib/r2";
-import {
-  computeLate,
-  computeAllFlags,
-  computeWorkedMinutes,
-  type ShiftData,
-} from "@/lib/attendance";
+import { computeLate, computeAllFlags, computeWorkedMinutes } from "@/lib/attendance";
+import { resolveShiftForWorker } from "@/lib/shift-resolution";
 
 export async function POST(req: NextRequest) {
   let body: { workerId?: string; pin?: string; photoBase64?: string | null; workDate?: string };
@@ -89,37 +80,11 @@ export async function POST(req: NextRequest) {
   }
 
   // Resolve shift (override first, then worker default)
-  const [override] = await db
-    .select({ shiftId: shiftAssignments.shiftId })
-    .from(shiftAssignments)
-    .where(
-      and(
-        eq(shiftAssignments.workerId, workerId),
-        eq(shiftAssignments.workDate, workDate)
-      )
-    )
-    .limit(1);
-
-  const resolvedShiftId = override?.shiftId ?? worker.defaultShiftId ?? null;
-
-  let shiftData: ShiftData | null = null;
-  if (resolvedShiftId) {
-    const [shiftRow] = await db
-      .select()
-      .from(shifts)
-      .where(eq(shifts.id, resolvedShiftId))
-      .limit(1);
-
-    if (shiftRow) {
-      shiftData = {
-        startTime: shiftRow.startTime,
-        endTime: shiftRow.endTime,
-        graceMinutes: shiftRow.graceMinutes,
-        earlyLeaveGraceMinutes: shiftRow.earlyLeaveGraceMinutes,
-        crossesMidnight: shiftRow.crossesMidnight,
-      };
-    }
-  }
+  const { shiftId: resolvedShiftId, shiftData } = await resolveShiftForWorker(
+    workerId,
+    workDate,
+    worker.defaultShiftId ?? null
+  );
 
   const now = new Date();
 

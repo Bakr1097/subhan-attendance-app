@@ -4,20 +4,14 @@ import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import {
   workers,
-  shifts,
-  shiftAssignments,
   attendanceRecords,
   supervisorScopes,
   auditLog,
 } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import {
-  computeLate,
-  computeAllFlags,
-  computeWorkedMinutes,
-  type ShiftData,
-} from "@/lib/attendance";
+import { computeAllFlags, computeWorkedMinutes } from "@/lib/attendance";
+import { resolveShiftForWorker } from "@/lib/shift-resolution";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -45,45 +39,6 @@ async function requireAccess(workerId: string) {
   );
   if (!allowed) throw new Error("Unauthorized");
   return session;
-}
-
-async function resolveShift(
-  workerId: string,
-  workDate: string,
-  defaultShiftId: string | null
-): Promise<{ shiftId: string | null; shiftData: ShiftData | null }> {
-  const [override] = await db
-    .select({ shiftId: shiftAssignments.shiftId })
-    .from(shiftAssignments)
-    .where(
-      and(
-        eq(shiftAssignments.workerId, workerId),
-        eq(shiftAssignments.workDate, workDate)
-      )
-    )
-    .limit(1);
-
-  const shiftId = override?.shiftId ?? defaultShiftId ?? null;
-  if (!shiftId) return { shiftId: null, shiftData: null };
-
-  const [row] = await db
-    .select()
-    .from(shifts)
-    .where(eq(shifts.id, shiftId))
-    .limit(1);
-
-  if (!row) return { shiftId, shiftData: null };
-
-  return {
-    shiftId,
-    shiftData: {
-      startTime: row.startTime,
-      endTime: row.endTime,
-      graceMinutes: row.graceMinutes,
-      earlyLeaveGraceMinutes: row.earlyLeaveGraceMinutes,
-      crossesMidnight: row.crossesMidnight,
-    },
-  };
 }
 
 async function writeAudit(
@@ -124,7 +79,7 @@ export async function correctAttendance(payload: CorrectionPayload) {
     .limit(1);
   if (!worker) throw new Error("Worker not found");
 
-  const { shiftId, shiftData } = await resolveShift(
+  const { shiftId, shiftData } = await resolveShiftForWorker(
     payload.workerId,
     payload.workDate,
     worker.defaultShiftId ?? null

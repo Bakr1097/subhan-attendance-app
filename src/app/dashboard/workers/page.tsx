@@ -114,6 +114,7 @@ export default async function WorkersPage({
       cnic: workers.cnic,
       phone: workers.phone,
       referencePhotoUrl: workers.referencePhotoUrl,
+      deviceUserId: workers.deviceUserId,
       deptName: departments.name,
       shiftName: shifts.name,
     })

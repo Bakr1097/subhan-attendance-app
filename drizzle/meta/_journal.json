@@ -8,6 +8,13 @@
       "when": 1780575381241,
       "tag": "0000_melted_albert_cleary",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782986766368,
+      "tag": "0001_chilly_molly_hayes",
+      "breakpoints": true
     }
   ]
 }

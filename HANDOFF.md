@@ -115,7 +115,7 @@
 
 ---
 
-### Step 12 — Audit Log Viewer ✓ (built, awaiting browser confirmation)
+### Step 12 — Audit Log Viewer ✓
 
 - `/dashboard/audit` — admin-only (non-admins redirect to `/dashboard`)
 - "Audit Log" link added to sidebar between Reports and Settings (admin-only, `ScrollText` icon)
@@ -193,7 +193,7 @@
 
 ---
 
-### Step 15 — User & Settings Management ✓
+### Step 15 — User & Settings Management ✓ (confirmed working in browser)
 
 - `/dashboard/users` — admin-only (non-admins redirect to `/dashboard`)
 - "Users" link added to sidebar between Audit Log and Settings (`UserCog` icon, `adminOnly: true`)
@@ -222,4 +222,26 @@
 
 ---
 
-## All 14 steps complete. App is in production.
+### Step 16 — Biometric Punch Ingestion, Part 1 (app side) ✓
+
+Builds the endpoint that will receive punches from a ZKTeco MB460 terminal. The bridge program that reads the device over LAN and POSTs to this endpoint is a separate, later step (Part 2) — not built here.
+
+- `workers.deviceUserId` — new nullable, unique `text` column mapping a worker to their enrolled User ID on the biometric device (migration `drizzle/0001_chilly_molly_hayes.sql`)
+- Worker create/edit form: "Biometric Device User ID" optional text field with helper text; saved through the existing `createWorker` / `updateWorker` actions; duplicate device IDs surface as a friendly "already assigned to another worker" error (same pattern as the Users page email-uniqueness check)
+- **`POST /api/biometric/punch`** — new public (no session) endpoint
+  - Auth: `x-bridge-secret` header must match `BRIDGE_API_SECRET`; 401 if missing/wrong
+  - Body: a single `{ deviceUserId, timestamp }` punch or an array of them; each is processed independently so one bad punch never fails the batch
+  - Device-reported check-in/check-out status is ignored entirely — direction is always derived from the DB, exactly like the Step 9 kiosk: no record or no `checkInAt` → check-in (`computeLate`); `checkInAt` set + `checkOutAt` null → check-out (`computeAllFlags`); both set → `already-complete`
+  - Idempotency: if the punch's timestamp exactly matches the record's stored `checkInAt` or `checkOutAt`, it's skipped as `duplicate` (the bridge may resend punches) — checked before the check-in/check-out classification so a resent check-in punch isn't mistaken for a checkout
+  - Unmatched `deviceUserId`s (no worker found) are skipped and collected, never fail the batch
+  - Returns `{ processed, checkedIn, checkedOut, duplicates, alreadyComplete, unmatched }`
+- **`src/lib/shift-resolution.ts`** — new shared helper (`resolveShiftForWorker`) extracted from the near-identical shift-override-then-default lookup that previously lived separately in the kiosk attend route and the attendance dashboard's `correctAttendance` action; both now import it, plus the new punch endpoint
+- Work-date derivation for a bare timestamp (no client to say "today" the way the kiosk does): the punch's UTC calendar date is used as-is, UNLESS the worker's **default** shift has `crossesMidnight = true`, in which case we first check whether the worker has a still-open record (checked in, not checked out) on the previous calendar day — if so, the punch is treated as that day's checkout instead of a new check-in on the new day. This only looks at the default shift for the date determination step (not a per-day override), since a shift_assignments override lookup itself requires already knowing the work date
+- `/api/biometric/*` added to middleware `PUBLIC_PATHS` — same reasoning as the kiosk: security is the shared secret, not a session
+- `BRIDGE_API_SECRET` added to `.env.local`; **the same value must be set in Vercel project env vars**: `kOxyH+zmjOeydrjpsz1v7MATRrK1R5S1NlKaDJCvRxY=`
+- Build: 21 routes, compiles cleanly
+- Note: while generating this migration, `drizzle-kit generate` also picked up `users.is_active` (added to `schema.ts` in Step 15 but never captured in a tracked migration — it was applied to the live DB out of band at the time). That line was removed from `0001_chilly_molly_hayes.sql` since the column already exists in the live database; only the `device_user_id` column is in this migration
+
+---
+
+## All 16 steps complete. App is in production. Part 2 (LAN bridge program) is a separate future step.

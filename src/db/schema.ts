@@ -80,6 +80,7 @@ export const workers = pgTable("workers", {
   pinHash: text("pin_hash").notNull(),
   referencePhotoUrl: text("reference_photo_url"),
   defaultShiftId: uuid("default_shift_id").references(() => shifts.id),
+  deviceUserId: text("device_user_id").unique(),
   status: text("status").$type<"active" | "inactive">().notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });

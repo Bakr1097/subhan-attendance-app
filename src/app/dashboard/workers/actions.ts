@@ -79,6 +79,7 @@ export interface WorkerCreatePayload {
   cnic: string;
   phone: string;
   referencePhotoUrl: string;
+  deviceUserId: string;
 }
 
 export interface WorkerUpdatePayload {
@@ -89,6 +90,7 @@ export interface WorkerUpdatePayload {
   cnic: string;
   phone: string;
   referencePhotoUrl: string;
+  deviceUserId: string;
 }
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
@@ -102,18 +104,26 @@ export async function createWorker(payload: WorkerCreatePayload) {
   const employeeCode = await generateEmployeeCode(payload.terminalId);
   const pinHash = await hash(payload.pin, 10);
 
-  await db.insert(workers).values({
-    terminalId: payload.terminalId,
-    departmentId: payload.departmentId,
-    defaultShiftId: payload.defaultShiftId || null,
-    employeeCode,
-    fullName: payload.fullName.trim(),
-    pinHash,
-    cnic: payload.cnic.trim() || null,
-    phone: payload.phone.trim() || null,
-    referencePhotoUrl: payload.referencePhotoUrl || null,
-    status: "active",
-  });
+  try {
+    await db.insert(workers).values({
+      terminalId: payload.terminalId,
+      departmentId: payload.departmentId,
+      defaultShiftId: payload.defaultShiftId || null,
+      employeeCode,
+      fullName: payload.fullName.trim(),
+      pinHash,
+      cnic: payload.cnic.trim() || null,
+      phone: payload.phone.trim() || null,
+      referencePhotoUrl: payload.referencePhotoUrl || null,
+      deviceUserId: payload.deviceUserId.trim() || null,
+      status: "active",
+    });
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message.toLowerCase().includes("unique")) {
+      throw new Error("That Device User ID is already assigned to another worker");
+    }
+    throw e;
+  }
 
   revalidatePath("/dashboard/workers");
   revalidatePath("/dashboard");
@@ -141,6 +151,7 @@ export async function updateWorker(id: string, payload: WorkerUpdatePayload) {
     cnic: payload.cnic.trim() || null,
     phone: payload.phone.trim() || null,
     referencePhotoUrl: payload.referencePhotoUrl || null,
+    deviceUserId: payload.deviceUserId.trim() || null,
   };
 
   // Only update PIN if a new one is provided
@@ -149,7 +160,14 @@ export async function updateWorker(id: string, payload: WorkerUpdatePayload) {
     updates.pinHash = await hash(payload.pin, 10);
   }
 
-  await db.update(workers).set(updates).where(eq(workers.id, id));
+  try {
+    await db.update(workers).set(updates).where(eq(workers.id, id));
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message.toLowerCase().includes("unique")) {
+      throw new Error("That Device User ID is already assigned to another worker");
+    }
+    throw e;
+  }
 
   revalidatePath("/dashboard/workers");
 }

@@ -38,6 +38,7 @@ interface WorkerRow {
   cnic: string | null;
   phone: string | null;
   referencePhotoUrl: string | null;
+  deviceUserId: string | null;
 }
 
 interface Props {
@@ -116,6 +117,7 @@ export function WorkerForm({
       phone: worker?.phone ?? "",
       pin: "",
       referencePhotoUrl: worker?.referencePhotoUrl ?? "",
+      deviceUserId: worker?.deviceUserId ?? "",
     };
   }
 
@@ -190,6 +192,7 @@ export function WorkerForm({
           cnic: form.cnic,
           phone: form.phone,
           referencePhotoUrl: form.referencePhotoUrl,
+          deviceUserId: form.deviceUserId,
         };
 
         if (worker) {
@@ -437,6 +440,26 @@ export function WorkerForm({
                   onChange={handleFileChange}
                 />
               </div>
+            </div>
+
+            {/* Biometric device user ID */}
+            <div className="space-y-2">
+              <Label htmlFor="w-device-user-id">
+                Biometric Device User ID{" "}
+                <span className="text-muted-foreground font-normal">
+                  (optional)
+                </span>
+              </Label>
+              <Input
+                id="w-device-user-id"
+                value={form.deviceUserId}
+                onChange={(e) => set("deviceUserId", e.target.value)}
+                placeholder="e.g. 42"
+              />
+              <p className="text-xs text-muted-foreground">
+                The User ID this worker is enrolled under on the attendance
+                terminal. Leave blank if not using biometric device.
+              </p>
             </div>
 
             <DialogFooter className="pt-2">
