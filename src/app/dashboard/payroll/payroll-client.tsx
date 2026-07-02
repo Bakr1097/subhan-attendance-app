@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Table,
@@ -12,12 +12,20 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { ChevronLeft, ChevronRight, Loader2, AlertTriangle, Download } from "lucide-react";
 import { setDayStatus } from "./actions";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
+
+export type DayStatus = "full" | "half" | "double" | "absent";
 
 export interface PayrollEntry {
   workerId: string;
@@ -27,9 +35,9 @@ export interface PayrollEntry {
   terminalId: string;
   departmentId: string;
   dailyRate: number;
-  present: boolean;
+  shiftsWorked: number;
   checkoutMissing: boolean;
-  dayStatus: "full" | "half";
+  status: DayStatus;
   amount: number;
 }
 
@@ -37,6 +45,20 @@ interface Terminal {
   id: string;
   name: string;
 }
+
+const STATUS_MULTIPLIER: Record<DayStatus, number> = {
+  absent: 0,
+  half: 0.5,
+  full: 1,
+  double: 2,
+};
+
+const STATUS_LABEL: Record<DayStatus, string> = {
+  full: "Full",
+  half: "Half",
+  double: "Double",
+  absent: "Absent",
+};
 
 // ─── Formatting helpers ────────────────────────────────────────────────────────
 
@@ -52,26 +74,40 @@ function formatDateDisplay(dateStr: string): string {
   return `${day} ${months[parseInt(month, 10) - 1]} ${year}`;
 }
 
+function formatCutoff12h(cutoffTime: string): string {
+  const [h, m] = cutoffTime.split(":").map(Number);
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+}
+
 function fmtPKR(n: number): string {
   return `Rs ${n.toLocaleString("en-PK")}`;
 }
 
-function downloadCSV(entries: PayrollEntry[], workDate: string, terminalName: string) {
-  const headers = ["Code", "Name", "Department", "Daily Rate", "Status", "Amount Payable"];
+function downloadCSV(
+  entries: PayrollEntry[],
+  closingDate: string,
+  cutoffTime: string,
+  terminalName: string
+) {
+  const headers = ["Code", "Name", "Department", "Daily Rate", "Shifts", "Status", "Amount Payable"];
 
   const dataRows = entries.map((e) => [
     e.employeeCode,
     e.fullName,
     e.deptName,
     e.dailyRate,
-    e.present ? (e.dayStatus === "half" ? "Half" : "Full") : "Absent",
+    e.shiftsWorked,
+    STATUS_LABEL[e.status],
     e.amount,
   ]);
 
   const totalPayable = entries.reduce((sum, e) => sum + e.amount, 0);
-  const totalsRow = ["TOTAL", "", "", "", "", totalPayable];
+  const totalsRow = ["TOTAL", "", "", "", "", "", totalPayable];
 
-  const metaRow = [`Payroll: ${formatDateDisplay(workDate)}`, `Terminal: ${terminalName}`];
+  const windowText = `covers ${formatDateDisplay(addDays(closingDate, -1))} ${formatCutoff12h(cutoffTime)} to ${formatDateDisplay(closingDate)} ${formatCutoff12h(cutoffTime)}`;
+  const metaRow = [`Payroll closing: ${formatDateDisplay(closingDate)}`, windowText, `Terminal: ${terminalName}`];
 
   const allRows = [metaRow, [], headers, ...dataRows, [], totalsRow];
 
@@ -85,23 +121,23 @@ function downloadCSV(entries: PayrollEntry[], workDate: string, terminalName: st
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `payroll-${workDate}.csv`;
+  a.download = `payroll-closing-${closingDate}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
-// ─── Half-day toggle ──────────────────────────────────────────────────────────
+// ─── Status dropdown ──────────────────────────────────────────────────────────
 
-function HalfDayToggle({ entry, workDate }: { entry: PayrollEntry; workDate: string }) {
+function StatusSelect({ entry, closingDate }: { entry: PayrollEntry; closingDate: string }) {
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
 
-  function handleToggle(checked: boolean) {
+  function handleChange(value: string) {
     startTransition(async () => {
       try {
-        await setDayStatus(entry.workerId, workDate, checked ? "half" : "full");
+        await setDayStatus(entry.workerId, closingDate, value as DayStatus);
       } catch (err) {
         toast({
           title: "Error",
@@ -115,14 +151,17 @@ function HalfDayToggle({ entry, workDate }: { entry: PayrollEntry; workDate: str
   return (
     <div className="flex items-center gap-2 justify-center">
       {pending && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
-      <Switch
-        checked={entry.dayStatus === "half"}
-        onCheckedChange={handleToggle}
-        disabled={!entry.present || pending}
-      />
-      <span className="text-xs text-muted-foreground w-8">
-        {entry.dayStatus === "half" ? "Half" : "Full"}
-      </span>
+      <Select value={entry.status} onValueChange={handleChange} disabled={pending}>
+        <SelectTrigger className="h-8 w-28">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="full">Full</SelectItem>
+          <SelectItem value="half">Half</SelectItem>
+          <SelectItem value="double">Double</SelectItem>
+          <SelectItem value="absent">Absent</SelectItem>
+        </SelectContent>
+      </Select>
     </div>
   );
 }
@@ -130,19 +169,21 @@ function HalfDayToggle({ entry, workDate }: { entry: PayrollEntry; workDate: str
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export function PayrollClient({
-  workDate,
+  closingDate,
+  cutoffTime,
   terminalId,
   visibleTerminals,
   entries,
 }: {
-  workDate: string;
+  closingDate: string;
+  cutoffTime: string;
   terminalId: string;
   visibleTerminals: Terminal[];
   entries: PayrollEntry[];
 }) {
   const router = useRouter();
   const today = new Date().toISOString().slice(0, 10);
-  const isToday = workDate === today;
+  const isToday = closingDate === today;
 
   function go(date: string, tid?: string) {
     const t = tid ?? terminalId;
@@ -150,13 +191,15 @@ export function PayrollClient({
   }
 
   const total = entries.length;
-  const present = entries.filter((e) => e.present).length;
-  const absent = entries.filter((e) => !e.present).length;
-  const halfDays = entries.filter((e) => e.present && e.dayStatus === "half").length;
+  const absent = entries.filter((e) => e.status === "absent").length;
+  const present = total - absent;
+  const totalShiftsPaid = entries.reduce((sum, e) => sum + STATUS_MULTIPLIER[e.status], 0);
   const totalPayable = entries.reduce((sum, e) => sum + e.amount, 0);
   const missingCheckoutCount = entries.filter((e) => e.checkoutMissing).length;
 
   const activeTerminal = visibleTerminals.find((t) => t.id === terminalId);
+  const prevDayLabel = formatDateDisplay(addDays(closingDate, -1));
+  const cutoffLabel = formatCutoff12h(cutoffTime);
 
   return (
     <div className="space-y-6">
@@ -165,7 +208,7 @@ export function PayrollClient({
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Daily Payroll</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Wages payable for daily-rate workers on a given date
+            Closing {formatDateDisplay(closingDate)} · covers {prevDayLabel} {cutoffLabel} → {formatDateDisplay(closingDate)} {cutoffLabel}
           </p>
         </div>
 
@@ -174,8 +217,8 @@ export function PayrollClient({
           <Button
             variant="outline"
             size="icon"
-            onClick={() => go(addDays(workDate, -1))}
-            title="Previous day"
+            onClick={() => go(addDays(closingDate, -1))}
+            title="Previous closing"
           >
             <ChevronLeft className="w-4 h-4" />
           </Button>
@@ -183,7 +226,7 @@ export function PayrollClient({
           <div className="flex items-center gap-2 px-3 py-1.5 border rounded-md bg-white min-w-36 justify-center">
             <input
               type="date"
-              value={workDate}
+              value={closingDate}
               onChange={(e) => e.target.value && go(e.target.value)}
               className="text-sm font-medium bg-transparent outline-none cursor-pointer"
             />
@@ -192,8 +235,8 @@ export function PayrollClient({
           <Button
             variant="outline"
             size="icon"
-            onClick={() => go(addDays(workDate, 1))}
-            title="Next day"
+            onClick={() => go(addDays(closingDate, 1))}
+            title="Next closing"
           >
             <ChevronRight className="w-4 h-4" />
           </Button>
@@ -208,10 +251,6 @@ export function PayrollClient({
               Today
             </Badge>
           )}
-
-          <span className="text-sm text-muted-foreground ml-1 hidden sm:block">
-            {formatDateDisplay(workDate)}
-          </span>
         </div>
       </div>
 
@@ -226,7 +265,7 @@ export function PayrollClient({
             {visibleTerminals.map((t) => (
               <a
                 key={t.id}
-                href={`/dashboard/payroll?date=${workDate}&terminal=${t.id}`}
+                href={`/dashboard/payroll?date=${closingDate}&terminal=${t.id}`}
                 className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
                   t.id === terminalId
                     ? "bg-primary text-white border-primary"
@@ -253,12 +292,10 @@ export function PayrollClient({
                 <span className="font-semibold text-red-600">{absent}</span>{" "}
                 <span className="text-muted-foreground">absent</span>
               </span>
-              {halfDays > 0 && (
-                <span>
-                  <span className="font-semibold text-amber-600">{halfDays}</span>{" "}
-                  <span className="text-muted-foreground">half-days</span>
-                </span>
-              )}
+              <span>
+                <span className="font-semibold text-foreground">{totalShiftsPaid}</span>{" "}
+                <span className="text-muted-foreground">total shifts paid</span>
+              </span>
               {missingCheckoutCount > 0 && (
                 <span className="flex items-center gap-1 text-orange-600">
                   <AlertTriangle className="w-3.5 h-3.5" />
@@ -271,7 +308,7 @@ export function PayrollClient({
               variant="outline"
               size="sm"
               className="gap-2"
-              onClick={() => downloadCSV(entries, workDate, activeTerminal?.name ?? "")}
+              onClick={() => downloadCSV(entries, closingDate, cutoffTime, activeTerminal?.name ?? "")}
               disabled={entries.length === 0}
             >
               <Download className="w-4 h-4" />
@@ -298,15 +335,16 @@ export function PayrollClient({
                   <TableHead>Name</TableHead>
                   <TableHead className="hidden md:table-cell">Dept</TableHead>
                   <TableHead className="text-right">Daily Rate</TableHead>
-                  <TableHead className="text-center">Present?</TableHead>
-                  <TableHead className="text-center">Day Status</TableHead>
-                  <TableHead className="text-right">Amount Payable</TableHead>
+                  <TableHead className="text-center">Shifts</TableHead>
+                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Note</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {entries.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
                       No daily-pay workers found for this terminal.
                     </TableCell>
                   </TableRow>
@@ -317,7 +355,7 @@ export function PayrollClient({
                       className={
                         entry.checkoutMissing
                           ? "bg-orange-50/50"
-                          : !entry.present
+                          : entry.status === "absent"
                           ? "bg-red-50/30"
                           : undefined
                       }
@@ -332,34 +370,22 @@ export function PayrollClient({
                       <TableCell className="text-right text-sm text-muted-foreground">
                         {fmtPKR(entry.dailyRate)}
                       </TableCell>
-                      <TableCell className="text-center">
-                        {entry.present ? (
-                          <Badge variant="secondary" className="bg-green-100 text-green-700">
-                            Yes
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary" className="bg-red-100 text-red-700">
-                            No
-                          </Badge>
-                        )}
-                        {entry.checkoutMissing && (
-                          <p className="flex items-center gap-1 justify-center text-xs text-orange-600 mt-1">
-                            <AlertTriangle className="w-3 h-3" />
-                            missing checkout
-                          </p>
-                        )}
+                      <TableCell className="text-center font-semibold">
+                        {entry.shiftsWorked}
                       </TableCell>
                       <TableCell className="text-center">
-                        {entry.present ? (
-                          <HalfDayToggle entry={entry} workDate={workDate} />
-                        ) : (
-                          <Badge variant="secondary" className="bg-red-100 text-red-700">
-                            Absent
-                          </Badge>
-                        )}
+                        <StatusSelect entry={entry} closingDate={closingDate} />
                       </TableCell>
                       <TableCell className="text-right font-semibold">
                         {fmtPKR(entry.amount)}
+                      </TableCell>
+                      <TableCell>
+                        {entry.checkoutMissing && (
+                          <span className="flex items-center gap-1 text-xs text-orange-600">
+                            <AlertTriangle className="w-3 h-3 shrink-0" />
+                            missing checkout
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))

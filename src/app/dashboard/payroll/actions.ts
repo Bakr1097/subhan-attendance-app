@@ -34,8 +34,8 @@ async function requireAccess(workerId: string) {
 
 export async function setDayStatus(
   workerId: string,
-  workDate: string,
-  dayStatus: "full" | "half"
+  closingDate: string,
+  dayStatus: "full" | "half" | "double" | "absent"
 ) {
   const session = await requireAccess(workerId);
 
@@ -45,24 +45,24 @@ export async function setDayStatus(
     .where(
       and(
         eq(payrollAdjustments.workerId, workerId),
-        eq(payrollAdjustments.workDate, workDate)
+        eq(payrollAdjustments.closingDate, closingDate)
       )
     )
     .limit(1);
 
-  const before = { dayStatus: existing?.dayStatus ?? "full" };
+  const before = existing ? { dayStatus: existing.dayStatus } : null;
   const now = new Date();
 
   const [row] = await db
     .insert(payrollAdjustments)
     .values({
       workerId,
-      workDate,
+      closingDate,
       dayStatus,
       actorUserId: session.user.id,
     })
     .onConflictDoUpdate({
-      target: [payrollAdjustments.workerId, payrollAdjustments.workDate],
+      target: [payrollAdjustments.workerId, payrollAdjustments.closingDate],
       set: { dayStatus, actorUserId: session.user.id, updatedAt: now },
     })
     .returning({ id: payrollAdjustments.id });

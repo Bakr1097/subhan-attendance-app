@@ -9,12 +9,13 @@ import {
   shiftAssignments,
   shifts,
   attendanceRecords,
-  payrollAdjustments,
 } from "@/db/schema";
 import { eq, and, count, inArray } from "drizzle-orm";
 import { Building2, Layers, Users, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { flagMissingCheckout, type ShiftData } from "@/lib/attendance";
+import { getPayrollCutoffTime } from "@/lib/settings";
+import { computePayrollForWorkers, STATUS_MULTIPLIER } from "@/lib/payroll-report";
 
 const MONTHS = [
   "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec",
@@ -155,20 +156,17 @@ export default async function DashboardPage() {
       : [];
   const recordMap = new Map(records.map((r) => [r.workerId, r]));
 
-  let adjustmentMap = new Map<string, "full" | "half">();
-  if (isAdmin && workerIds.length > 0) {
-    const adjustments = await db
-      .select()
-      .from(payrollAdjustments)
-      .where(
-        and(
-          eq(payrollAdjustments.workDate, today),
-          inArray(payrollAdjustments.workerId, workerIds)
-        )
-      );
-    adjustmentMap = new Map(
-      adjustments.map((a) => [a.workerId, a.dayStatus as "full" | "half"])
-    );
+  // Payable figure uses the Step 18 closing-window model (not calendar day) so
+  // it matches what the Payroll page would show for a closing run today.
+  let payrollComputedMap = new Map<string, { status: "full" | "half" | "double" | "absent" }>();
+  if (isAdmin) {
+    const dailyWorkerIds = scopedWorkers
+      .filter((w) => w.payType === "daily")
+      .map((w) => w.id);
+    if (dailyWorkerIds.length > 0) {
+      const cutoffTime = await getPayrollCutoffTime();
+      payrollComputedMap = await computePayrollForWorkers(dailyWorkerIds, today, cutoffTime);
+    }
   }
 
   const now = new Date();
@@ -203,10 +201,11 @@ export default async function DashboardPage() {
     if (checkoutMissing) missingCheckoutToday++;
 
     if (isAdmin && w.payType === "daily") {
-      const present = !!record?.checkInAt;
-      const dayStatus = adjustmentMap.get(w.id) ?? "full";
+      const computed = payrollComputedMap.get(w.id);
       const rate = w.dailyRate ?? 0;
-      payableToday += !present ? 0 : dayStatus === "half" ? Math.round(rate / 2) : rate;
+      if (computed) {
+        payableToday += Math.round(rate * STATUS_MULTIPLIER[computed.status]);
+      }
     }
   }
 

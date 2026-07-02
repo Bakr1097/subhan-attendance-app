@@ -160,6 +160,9 @@ export const auditLog = pgTable("audit_log", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
+// Keyed on the CLOSING date (Step 18), not calendar work date — a closing
+// settles the rolling window from the previous day's cutoff to this day's
+// cutoff. Superseded Step 17's workDate-keyed half-day toggle.
 export const payrollAdjustments = pgTable(
   "payroll_adjustments",
   {
@@ -167,8 +170,11 @@ export const payrollAdjustments = pgTable(
     workerId: uuid("worker_id")
       .notNull()
       .references(() => workers.id),
-    workDate: date("work_date").notNull(),
-    dayStatus: text("day_status").$type<"full" | "half">().notNull().default("full"),
+    closingDate: date("closing_date").notNull(),
+    dayStatus: text("day_status")
+      .$type<"full" | "half" | "double" | "absent">()
+      .notNull()
+      .default("full"),
     actorUserId: uuid("actor_user_id")
       .notNull()
       .references(() => users.id),
@@ -176,6 +182,12 @@ export const payrollAdjustments = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
   (t) => ({
-    workerDateUnique: unique().on(t.workerId, t.workDate),
+    workerClosingDateUnique: unique().on(t.workerId, t.closingDate),
   })
 );
+
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});

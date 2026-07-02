@@ -299,4 +299,37 @@ Self-contained Node.js program in **`zkteco-bridge/`**, separate from the Next.j
 
 ---
 
-## All 17 steps complete. App is in production with biometric device integration and daily-wage payroll.
+### Step 18 — Closing-Window Payroll + Terminal-Scoped Supervisor Access ✓
+
+**This supersedes the Step 17 calendar-day payroll model.** Step 17 paid by calendar work-date; that's wrong for this business — wages are settled at a daily closing (default 2:30 PM Pakistan time), not at midnight, and a worker can be paid for two shifts in one closing.
+
+**The model:**
+- A closing for date D covers the rolling window **[(D-1) at cutoff, D at cutoff)**, in Pakistan local time (UTC+5, no DST) — this naturally spans the previous day's evening/night shift and the current day's morning shift.
+- The operation runs one day behind: today's closing run settles **yesterday's** completed window. The payroll page always spells out the exact window in the header (e.g. "Closing 05 Jul 2026 · covers 04 Jul 2026 2:30 PM → 05 Jul 2026 2:30 PM") so a manager can never mistake which day is being paid.
+- `shiftsWorked` = count of that worker's `attendance_records` whose `checkInAt` falls inside the window — queried directly by timestamp range (`gte`/`lt` on `checkInAt`), not by `workDate` string matching. This is how a "double" (2) is detected automatically: it requires two separate qualifying rows, not just one shift with unusual hours.
+- Pay = `dailyRate × multiplier`, where multiplier comes from status: absent=0, half=0.5, full=1, double=2. Default status is auto-derived from `shiftsWorked` (0→absent, 1→full, 2+→double) unless a manager has manually overridden it for that (worker, closing date).
+- A record with `checkInAt` but no `checkOutAt` still counts toward pay (missing checkout never blocks pay) but surfaces a "⚠ missing checkout" note for review, recomputed live via `flagMissingCheckout` using that record's own stored `resolvedShiftId` (not the worker's current default shift — the shift that was actually resolved at check-in time).
+
+**⚠ Known architectural limit (documented, not fixed — out of scope for a payroll-only step):** `attendance_records` still has the Step 2 unique constraint on `(workerId, workDate)`. A "double" is only correctly counted when the worker's two shift sessions resolve to two *different* `workDate` values (the realistic case described: a night shift that started the day before + the next morning's shift). If a worker's two shifts both resolved to the *same* `workDate` (e.g. two non-midnight-crossing shifts on the same calendar day), the second check-in would collide with the first shift's row via the kiosk/biometric endpoints' `onConflictDoUpdate` upsert rather than creating a second row, and `shiftsWorked` would undercount. Properly supporting arbitrary multi-shift days would require relaxing that unique constraint and reworking the kiosk (`/api/kiosk/attend`) and biometric (`/api/biometric/punch`) check-in/check-out matching logic — a much larger change than this step, deliberately not attempted here.
+
+**New table `app_settings`** (`key` text PK, `value`, `updatedAt`) — simple key/value store for global settings, starting with `payrollCutoffTime` (default `"14:30"`, no row needed until an admin changes it). Helpers in `src/lib/settings.ts` (`getSetting`/`setSetting`/`getPayrollCutoffTime`).
+
+**`/dashboard/settings`** — brand new page (the sidebar link existed since Step 15 but the page itself was never built — confirmed via `find`, it 404'd before this step). Admin-only (redirect + sidebar `adminOnly` now `true`, was incorrectly `false`). Single field: payroll closing time, HH:MM 24h input, validated server-side.
+
+**`payroll_adjustments` re-keyed**: `workDate` column renamed to `closingDate` (real Postgres `RENAME COLUMN`, not drop+add — no data lost; drizzle-kit's generate prompted rename-vs-create and rename was selected). `dayStatus` type widened from `"full" | "half"` to `"full" | "half" | "double" | "absent"`. `setDayStatus()` (`src/app/dashboard/payroll/actions.ts`) now takes 4 statuses; still writes an audit_log row (`action: "payroll_adjust"`) same as Step 17.
+
+**`src/lib/payroll-report.ts`** — new shared module (used by both `/dashboard/payroll` and the dashboard today-strip, so the two never disagree): `computeClosingWindow()`, `computePayrollForWorkers()`, `STATUS_MULTIPLIER`. PKT conversion is a hardcoded UTC+5 offset (Pakistan has no DST), not the server's OS timezone — important since Vercel functions run in UTC.
+
+**`/dashboard/payroll` rebuilt**: date navigator now selects the closing date; window shown prominently in the header; columns are Code/Name/Dept/Daily Rate/Shifts/Status (dropdown: Full/Half/Double/Absent)/Amount/Note; summary bar adds "total shifts paid" (sum of multipliers); CSV filename is now `payroll-closing-{date}.csv` with the window text in the meta row.
+
+**Dashboard today-strip**: Present/Absent/Late/Missing-checkout stay calendar-day based (unchanged, per instruction). "Today's Payable" (admin-only) now calls `computePayrollForWorkers()` with `closingDate = today`, so it matches exactly what `/dashboard/payroll` would show for a closing run today — previously (Step 17) it used the old calendar-day half/full logic, which is now gone.
+
+**Supervisor terminal-level scope — audited, not changed:** grepped every scope-check site (`workers`, `attendance`, `payroll`, `reports` summary + detail, `roster`, kiosk workers route — 13 files) and all of them already correctly expand a terminal-wide `supervisorScopes` row (`departmentId = null`) to every department under that terminal, not just one. The Users management form already defaults new supervisor scopes to "All departments" (empty = terminal-wide) with a specific department as an explicit opt-in, not the default. **The only real gap found** was the Settings sidebar link/page (see above) — fixed as part of building Settings for this step. No other scoping code changes were needed; this was a genuine "verify" task, not a "fix" task.
+
+**Verified in a real logged-in browser session** (via curl + cookie jar) against **live production data** — a real worker (Muhammad Abu Bakr) has `dailyRate = 800` and a real check-in at `2026-07-02T09:07:21Z`. For closing date 2026-07-02 with the default 14:30 cutoff, the computed window was `[2026-07-01T09:30:00Z, 2026-07-02T09:30:00Z)` — displayed correctly on-screen as "covers 01 Jul 2026 2:30 PM → 02 Jul 2026 2:30 PM" — and that check-in correctly fell inside it, producing `shiftsWorked = 1`, status "Full", amount **Rs 800**, matching hand-calculation exactly. Settings, Payroll, and Dashboard pages all returned 200 with correct scoped data. Did not click the Status dropdown interactively (Next.js server actions aren't easily driven via curl) or create a real double-shift scenario to observe `shiftsWorked = 2` firsthand — recommend the user try both once.
+
+- Build: 23 routes, compiles cleanly
+
+---
+
+## All 18 steps complete. App is in production; payroll now follows the real closing-cutoff business model.

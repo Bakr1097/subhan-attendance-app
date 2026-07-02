@@ -4,15 +4,12 @@ import { db } from "@/lib/db";
 import {
   workers,
   departments,
-  shifts,
   terminals,
-  shiftAssignments,
-  attendanceRecords,
-  payrollAdjustments,
   supervisorScopes,
 } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
-import { flagMissingCheckout, type ShiftData } from "@/lib/attendance";
+import { getPayrollCutoffTime } from "@/lib/settings";
+import { computePayrollForWorkers, STATUS_MULTIPLIER } from "@/lib/payroll-report";
 import { PayrollClient, type PayrollEntry } from "./payroll-client";
 
 export default async function PayrollPage({
@@ -23,7 +20,8 @@ export default async function PayrollPage({
   const session = await auth();
   if (!session) redirect("/login");
 
-  const workDate = searchParams.date ?? new Date().toISOString().slice(0, 10);
+  const closingDate = searchParams.date ?? new Date().toISOString().slice(0, 10);
+  const cutoffTime = await getPayrollCutoffTime();
 
   // ── Scoped terminals ─────────────────────────────────────────────────────────
   const allTerminals = await db
@@ -53,6 +51,8 @@ export default async function PayrollPage({
       if (scope.departmentId) {
         ids.push(scope.departmentId);
       } else {
+        // Terminal-wide scope (no department set) — every department under
+        // this terminal is visible, not just one. See HANDOFF.md Step 18.
         allDepts
           .filter((d) => d.terminalId === scope.terminalId)
           .forEach((d) => ids.push(d.id));
@@ -77,7 +77,6 @@ export default async function PayrollPage({
             fullName: workers.fullName,
             terminalId: workers.terminalId,
             departmentId: workers.departmentId,
-            defaultShiftId: workers.defaultShiftId,
             dailyRate: workers.dailyRate,
             deptName: departments.name,
           })
@@ -96,102 +95,15 @@ export default async function PayrollPage({
 
   const workerIds = workerRows.map((w) => w.id);
 
-  // ── Shift overrides for this date ─────────────────────────────────────────────
-  const overrides =
-    workerIds.length > 0
-      ? await db
-          .select({
-            workerId: shiftAssignments.workerId,
-            shiftId: shiftAssignments.shiftId,
-          })
-          .from(shiftAssignments)
-          .where(
-            and(
-              eq(shiftAssignments.workDate, workDate),
-              inArray(shiftAssignments.workerId, workerIds)
-            )
-          )
-      : [];
-
-  const overrideMap = new Map(overrides.map((o) => [o.workerId, o.shiftId]));
-
-  const shiftIds = new Set<string>();
-  workerRows.forEach((w) => { if (w.defaultShiftId) shiftIds.add(w.defaultShiftId); });
-  overrides.forEach((o) => shiftIds.add(o.shiftId));
-
-  const shiftRows =
-    shiftIds.size > 0
-      ? await db
-          .select()
-          .from(shifts)
-          .where(inArray(shifts.id, Array.from(shiftIds)))
-      : [];
-
-  const shiftMap = new Map(shiftRows.map((s) => [s.id, s]));
-
-  // ── Attendance records for this date ─────────────────────────────────────────
-  const records =
-    workerIds.length > 0
-      ? await db
-          .select()
-          .from(attendanceRecords)
-          .where(
-            and(
-              eq(attendanceRecords.workDate, workDate),
-              inArray(attendanceRecords.workerId, workerIds)
-            )
-          )
-      : [];
-
-  const recordMap = new Map(records.map((r) => [r.workerId, r]));
-
-  // ── Half-day adjustments for this date ────────────────────────────────────────
-  const adjustments =
-    workerIds.length > 0
-      ? await db
-          .select()
-          .from(payrollAdjustments)
-          .where(
-            and(
-              eq(payrollAdjustments.workDate, workDate),
-              inArray(payrollAdjustments.workerId, workerIds)
-            )
-          )
-      : [];
-
-  const adjustmentMap = new Map(adjustments.map((a) => [a.workerId, a.dayStatus]));
-
-  // ── Build entries ──────────────────────────────────────────────────────────────
-  const now = new Date();
+  const computedMap = await computePayrollForWorkers(workerIds, closingDate, cutoffTime);
 
   const entries: PayrollEntry[] = workerRows.map((w) => {
-    const resolvedShiftId = overrideMap.get(w.id) ?? w.defaultShiftId ?? null;
-    const shiftRow = resolvedShiftId ? shiftMap.get(resolvedShiftId) : null;
-    const record = recordMap.get(w.id) ?? null;
-
-    const shiftData: ShiftData | null = shiftRow
-      ? {
-          startTime: shiftRow.startTime,
-          endTime: shiftRow.endTime,
-          graceMinutes: shiftRow.graceMinutes,
-          earlyLeaveGraceMinutes: shiftRow.earlyLeaveGraceMinutes,
-          crossesMidnight: shiftRow.crossesMidnight,
-        }
-      : null;
-
-    const present = !!record?.checkInAt;
-
-    const checkoutMissing =
-      present && record?.checkInAt && !record?.checkOutAt && shiftData
-        ? flagMissingCheckout(record.checkInAt, null, shiftData, workDate, now)
-        : (record?.checkoutMissing ?? false);
-
-    const dayStatus: "full" | "half" = present
-      ? (adjustmentMap.get(w.id) as "full" | "half" | undefined) ?? "full"
-      : "full";
-
+    const c = computedMap.get(w.id);
+    const shiftsWorked = c?.shiftsWorked ?? 0;
+    const checkoutMissing = c?.checkoutMissing ?? false;
+    const status = c?.status ?? "absent";
     const dailyRate = w.dailyRate ?? 0;
-    const amount = !present ? 0 : dayStatus === "half" ? Math.round(dailyRate / 2) : dailyRate;
+    const amount = Math.round(dailyRate * STATUS_MULTIPLIER[status]);
 
     return {
       workerId: w.id,
@@ -201,16 +113,17 @@ export default async function PayrollPage({
       terminalId: w.terminalId,
       departmentId: w.departmentId,
       dailyRate,
-      present,
+      shiftsWorked,
       checkoutMissing,
-      dayStatus,
+      status,
       amount,
     };
   });
 
   return (
     <PayrollClient
-      workDate={workDate}
+      closingDate={closingDate}
+      cutoffTime={cutoffTime}
       terminalId={activeTerminalId}
       visibleTerminals={visibleTerminals.map((t) => ({ id: t.id, name: t.name }))}
       entries={entries}

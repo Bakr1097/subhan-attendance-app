@@ -30,7 +30,7 @@ const NAV_ITEMS = [
   { label: "Payroll", href: "/dashboard/payroll", icon: Banknote, adminOnly: false },
   { label: "Audit Log", href: "/dashboard/audit", icon: ScrollText, adminOnly: true },
   { label: "Users", href: "/dashboard/users", icon: UserCog, adminOnly: true },
-  { label: "Settings", href: "/dashboard/settings", icon: Settings, adminOnly: false },
+  { label: "Settings", href: "/dashboard/settings", icon: Settings, adminOnly: true },
 ];
 
 interface SidebarProps {
