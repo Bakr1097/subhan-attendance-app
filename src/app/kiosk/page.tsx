@@ -1,8 +1,14 @@
 import { db } from "@/lib/db";
 import { terminals, workers, departments, attendanceRecords } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull, isNotNull } from "drizzle-orm";
 import Link from "next/link";
 import { KioskClient, type WorkerEntry } from "./kiosk-client";
+
+// DB reads use no-store fetches (see src/lib/db.ts) so results are always
+// live, never stale-cached. That makes this route incompatible with Next's
+// static-generation attempt for the no-params "/kiosk" shell — force it
+// dynamic explicitly rather than relying on searchParams usage alone.
+export const dynamic = "force-dynamic";
 
 export default async function KioskPage({
   searchParams,
@@ -55,8 +61,6 @@ export default async function KioskPage({
     );
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-
   const workerRows = await db
     .select({
       id: workers.id,
@@ -70,37 +74,33 @@ export default async function KioskPage({
     .where(and(eq(workers.terminalId, terminalId), eq(workers.status, "active")))
     .orderBy(workers.fullName);
 
-  const todayRecords =
+  // "Checked in" means "has an open shift right now" — regardless of
+  // workDate, so a worker who already finished shift 1 today can check in
+  // again for shift 2, and an overnight shift still shows correctly (Step 19).
+  const openRecords =
     workerRows.length > 0
       ? await db
-          .select({
-            workerId: attendanceRecords.workerId,
-            checkInAt: attendanceRecords.checkInAt,
-            checkOutAt: attendanceRecords.checkOutAt,
-          })
+          .select({ workerId: attendanceRecords.workerId })
           .from(attendanceRecords)
           .where(
             and(
               eq(attendanceRecords.terminalId, terminalId),
-              eq(attendanceRecords.workDate, today)
+              isNotNull(attendanceRecords.checkInAt),
+              isNull(attendanceRecords.checkOutAt)
             )
           )
       : [];
 
-  const recordMap = new Map(todayRecords.map((r) => [r.workerId, r]));
+  const openSet = new Set(openRecords.map((r) => r.workerId));
 
-  const workerList: WorkerEntry[] = workerRows.map((w) => {
-    const rec = recordMap.get(w.id);
-    return {
-      id: w.id,
-      employeeCode: w.employeeCode,
-      fullName: w.fullName,
-      referencePhotoUrl: w.referencePhotoUrl ?? null,
-      deptName: w.deptName ?? "—",
-      checkedIn: !!rec?.checkInAt,
-      checkedOut: !!rec?.checkOutAt,
-    };
-  });
+  const workerList: WorkerEntry[] = workerRows.map((w) => ({
+    id: w.id,
+    employeeCode: w.employeeCode,
+    fullName: w.fullName,
+    referencePhotoUrl: w.referencePhotoUrl ?? null,
+    deptName: w.deptName ?? "—",
+    checkedIn: openSet.has(w.id),
+  }));
 
   return (
     <KioskClient

@@ -96,7 +96,7 @@ export default async function AttendancePage({
 
   const workerIds = workerRows.map((w) => w.id);
 
-  // ── Shift overrides for this date ─────────────────────────────────────────────
+  // ── Shift overrides for this date (used for "no record yet" rows) ────────────
   const overrides =
     workerIds.length > 0
       ? await db
@@ -115,22 +115,7 @@ export default async function AttendancePage({
 
   const overrideMap = new Map(overrides.map((o) => [o.workerId, o.shiftId]));
 
-  // ── Load all needed shifts ─────────────────────────────────────────────────────
-  const shiftIds = new Set<string>();
-  workerRows.forEach((w) => { if (w.defaultShiftId) shiftIds.add(w.defaultShiftId); });
-  overrides.forEach((o) => shiftIds.add(o.shiftId));
-
-  const shiftRows =
-    shiftIds.size > 0
-      ? await db
-          .select()
-          .from(shifts)
-          .where(inArray(shifts.id, Array.from(shiftIds)))
-      : [];
-
-  const shiftMap = new Map(shiftRows.map((s) => [s.id, s]));
-
-  // ── Attendance records for this date ─────────────────────────────────────────
+  // ── Attendance records for this date — a worker may have several (Step 19) ───
   const records =
     workerIds.length > 0
       ? await db
@@ -144,63 +129,117 @@ export default async function AttendancePage({
           )
       : [];
 
-  const recordMap = new Map(records.map((r) => [r.workerId, r]));
+  const recordsByWorker = new Map<string, typeof records>();
+  for (const r of records) {
+    if (!recordsByWorker.has(r.workerId)) recordsByWorker.set(r.workerId, []);
+    recordsByWorker.get(r.workerId)!.push(r);
+  }
+  for (const list of Array.from(recordsByWorker.values())) {
+    list.sort((a, b) => (a.shiftSequence ?? 0) - (b.shiftSequence ?? 0));
+  }
 
-  // ── Build merged entries ──────────────────────────────────────────────────────
-  const now = new Date();
+  // ── Load all needed shifts — worker defaults/overrides AND each record's own ──
+  const shiftIds = new Set<string>();
+  workerRows.forEach((w) => { if (w.defaultShiftId) shiftIds.add(w.defaultShiftId); });
+  overrides.forEach((o) => shiftIds.add(o.shiftId));
+  records.forEach((r) => { if (r.resolvedShiftId) shiftIds.add(r.resolvedShiftId); });
 
-  const entries: AttendanceEntry[] = workerRows.map((w) => {
-    const resolvedShiftId =
-      overrideMap.get(w.id) ?? w.defaultShiftId ?? null;
-    const shiftRow = resolvedShiftId ? shiftMap.get(resolvedShiftId) : null;
-    const record = recordMap.get(w.id) ?? null;
+  const shiftRows =
+    shiftIds.size > 0
+      ? await db
+          .select()
+          .from(shifts)
+          .where(inArray(shifts.id, Array.from(shiftIds)))
+      : [];
 
-    const shiftData: ShiftData | null = shiftRow
+  const shiftMap = new Map(shiftRows.map((s) => [s.id, s]));
+
+  function toShiftData(shiftId: string | null): ShiftData | null {
+    const row = shiftId ? shiftMap.get(shiftId) : null;
+    return row
       ? {
-          startTime: shiftRow.startTime,
-          endTime: shiftRow.endTime,
-          graceMinutes: shiftRow.graceMinutes,
-          earlyLeaveGraceMinutes: shiftRow.earlyLeaveGraceMinutes,
-          crossesMidnight: shiftRow.crossesMidnight,
+          startTime: row.startTime,
+          endTime: row.endTime,
+          graceMinutes: row.graceMinutes,
+          earlyLeaveGraceMinutes: row.earlyLeaveGraceMinutes,
+          crossesMidnight: row.crossesMidnight,
         }
       : null;
+  }
 
-    // Re-evaluate checkoutMissing live so it reflects the current time
-    const checkoutMissing =
-      record && record.checkInAt && !record.checkOutAt && shiftData
-        ? flagMissingCheckout(
-            record.checkInAt,
-            null,
-            shiftData,
-            workDate,
-            now
-          )
-        : (record?.checkoutMissing ?? false);
+  // ── Build merged entries — one row per record, or one placeholder row ────────
+  const now = new Date();
 
-    return {
-      workerId: w.id,
-      employeeCode: w.employeeCode,
-      fullName: w.fullName,
-      deptName: w.deptName ?? "—",
-      terminalId: w.terminalId,
-      departmentId: w.departmentId,
-      resolvedShiftId,
-      shiftName: shiftRow?.name ?? null,
-      shiftStart: shiftRow?.startTime?.slice(0, 5) ?? null,
-      shiftEnd: shiftRow?.endTime?.slice(0, 5) ?? null,
-      recordId: record?.id ?? null,
-      checkInAt: record?.checkInAt?.toISOString() ?? null,
-      checkOutAt: record?.checkOutAt?.toISOString() ?? null,
-      status: record?.status ?? null,
-      leaveReason: record?.leaveReason ?? null,
-      isLate: record?.isLate ?? false,
-      lateMinutes: record?.lateMinutes ?? 0,
-      leftEarly: record?.leftEarly ?? false,
-      earlyLeaveMinutes: record?.earlyLeaveMinutes ?? 0,
-      overtimeMinutes: record?.overtimeMinutes ?? 0,
-      workedMinutes: record?.workedMinutes ?? null,
-      checkoutMissing,
-    };
+  const entries: AttendanceEntry[] = workerRows.flatMap((w): AttendanceEntry[] => {
+    const recs = recordsByWorker.get(w.id) ?? [];
+
+    if (recs.length === 0) {
+      const resolvedShiftId = overrideMap.get(w.id) ?? w.defaultShiftId ?? null;
+      const shiftRow = resolvedShiftId ? shiftMap.get(resolvedShiftId) : null;
+      return [
+        {
+          workerId: w.id,
+          recordId: null,
+          shiftSequence: null,
+          employeeCode: w.employeeCode,
+          fullName: w.fullName,
+          deptName: w.deptName ?? "—",
+          terminalId: w.terminalId,
+          departmentId: w.departmentId,
+          resolvedShiftId,
+          shiftName: shiftRow?.name ?? null,
+          shiftStart: shiftRow?.startTime?.slice(0, 5) ?? null,
+          shiftEnd: shiftRow?.endTime?.slice(0, 5) ?? null,
+          checkInAt: null,
+          checkOutAt: null,
+          status: null,
+          leaveReason: null,
+          isLate: false,
+          lateMinutes: 0,
+          leftEarly: false,
+          earlyLeaveMinutes: 0,
+          overtimeMinutes: 0,
+          workedMinutes: null,
+          checkoutMissing: false,
+        },
+      ];
+    }
+
+    return recs.map((record) => {
+      const shiftRow = record.resolvedShiftId ? shiftMap.get(record.resolvedShiftId) : null;
+      const shiftData = toShiftData(record.resolvedShiftId);
+
+      const checkoutMissing =
+        record.checkInAt && !record.checkOutAt && shiftData
+          ? flagMissingCheckout(record.checkInAt, null, shiftData, record.workDate, now)
+          : record.checkoutMissing;
+
+      return {
+        workerId: w.id,
+        recordId: record.id,
+        shiftSequence: record.shiftSequence,
+        employeeCode: w.employeeCode,
+        fullName: w.fullName,
+        deptName: w.deptName ?? "—",
+        terminalId: w.terminalId,
+        departmentId: w.departmentId,
+        resolvedShiftId: record.resolvedShiftId,
+        shiftName: shiftRow?.name ?? null,
+        shiftStart: shiftRow?.startTime?.slice(0, 5) ?? null,
+        shiftEnd: shiftRow?.endTime?.slice(0, 5) ?? null,
+        checkInAt: record.checkInAt?.toISOString() ?? null,
+        checkOutAt: record.checkOutAt?.toISOString() ?? null,
+        status: record.status,
+        leaveReason: record.leaveReason,
+        isLate: record.isLate,
+        lateMinutes: record.lateMinutes,
+        leftEarly: record.leftEarly,
+        earlyLeaveMinutes: record.earlyLeaveMinutes,
+        overtimeMinutes: record.overtimeMinutes,
+        workedMinutes: record.workedMinutes,
+        checkoutMissing,
+      };
+    });
   });
 
   return (

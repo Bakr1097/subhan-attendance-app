@@ -332,4 +332,39 @@ Self-contained Node.js program in **`zkteco-bridge/`**, separate from the Next.j
 
 ---
 
-## All 18 steps complete. App is in production; payroll now follows the real closing-cutoff business model.
+---
+
+### Step 19 — Multiple Same-Day Attendance Records for Double Shifts ✓
+
+**This completes the double-shift limitation flagged in Step 18.** Step 18's payroll correctly counted `shiftsWorked` by querying `checkInAt` timestamps directly (not `workDate` equality), so it was already double-shift-aware in principle — but `attendance_records` still had a unique `(workerId, workDate)` constraint from Step 2, so a second same-day check-in would collide with the first shift's row instead of creating a second one. This step removes that constraint and rebuilds check-in/check-out around open-record detection instead of per-day upserts.
+
+**Schema:**
+- Dropped the unique `(workerId, workDate)` constraint on `attendance_records`; `id` remains the primary key (unchanged, already a surrogate key)
+- Added nullable `shiftSequence` integer (1, 2, … per worker per workDate) for human-readable ordering in the UI/reports
+- Migration `drizzle/0004_pale_hemingway.sql` includes a manual backfill (`UPDATE ... SET shift_sequence = 1 WHERE shift_sequence IS NULL`) since every existing row was the only shift for its day under the old constraint — verified before/after row counts matched (10 → 10) and all backfilled to 1
+
+**The rule:** a new check-in is only allowed when the worker has no open (checked-in, checkout still null) record; if one exists, the punch closes it instead. Implemented once in **`src/lib/punch-resolution.ts`** (`findOpenRecord`, `resolvePunch`) and used by both `/api/kiosk/attend` and `/api/biometric/punch` — no more `onConflictDoUpdate` on `attendance_records` anywhere.
+- The open-record search is NOT scoped to a workDate, which is what correctly closes an overnight shift the next calendar day (Step 6 `crossesMidnight` handling is unaffected — checkout still uses the open record's own `resolvedShiftId`/`workDate` for flag computation, not "today").
+- Idempotency preserved for the biometric bridge: a resent punch matching the open record's `checkInAt`, or the worker's most recent record's `checkOutAt`, is reported as `duplicate` instead of being reapplied.
+- The old "already complete for the day" 409 guard is gone — it no longer applies (a worker can have a complete shift #1 and an open shift #2 the same day); a closed record is simply never touched again by punches.
+- Biometric endpoint's `resolveWorkDate` heuristic (checking the previous day for an open record when the shift crosses midnight) is now redundant and removed — the global open-record search already handles it; new check-ins just use the UTC calendar date of the timestamp, same as before.
+
+**Kiosk UI updated to actually support this:** `WorkerEntry.checkedOut` was removed; `checkedIn` now means "has an open shift right now" (sourced from `/api/kiosk/workers` and the SSR `kiosk/page.tsx` via an open-record query, not "today's single record"). Previously, once a worker checked out the tile stayed marked "Done" for the rest of the day with no way to see they could start another shift — now the tile correctly returns to neutral after checkout, ready for a real second check-in.
+
+**Attendance page (Step 10):** a worker with 2 shifts now renders as 2 rows (keyed by `recordId`), each labelled "Shift 2" etc. when `shiftSequence > 1`. Summary counts (present/absent/leave/no-record) are deduped per distinct worker so a double shift is still one present person; late/missing-checkout stay per-shift (row-level), matching the prompt's instruction. `correctAttendance` now takes an explicit `recordId` (null = create a new record, computing the correct `shiftSequence`) instead of looking up by `(workerId, workDate)`. `markAbsent`/`markLeave` now guard against >1 existing record for the day (ambiguous which to overwrite) and are only exposed in the UI on the "no record yet" placeholder row — a worker with a real shift row is obviously present, not absent.
+
+**Reports (Step 11):** monthly summary's "Present" now counts distinct `workDate`s with a present record (not rows), plus a new "Total Shifts" column/CSV field that counts every present row — so a worker with 20 present days and 3 doubles shows Present=20, Total Shifts=23. Detail page lists every shift on a day as its own row with a "Shift 2" badge, and shows a "Total Shifts" chip only when it differs from Present days.
+
+**Payroll (Step 18):** confirmed via code review + live testing that no changes were needed — `computePayrollForWorkers()` already queries `attendanceRecords` by `checkInAt` timestamp range, not `workDate`, so it was already correctly double-shift-aware.
+
+**Audit log:** unchanged pattern, still per-record — `correctAttendance`/`markAbsent`/`markLeave` all write `entityId` as the specific `attendance_records.id` touched.
+
+**⚠ Important bug found and fixed during this step's testing (unrelated to double shifts, but affects the whole app):** the Neon serverless HTTP driver's queries are plain `fetch()` calls under the hood, and Next.js's fetch Data Cache was silently caching them — indefinitely, and persisted to disk (`.next/cache/fetch-cache`), surviving dev-server restarts. Any query whose SQL text+params repeat across requests (e.g. the kiosk worker list, filtered only by terminal+status with no date parameter) could get stuck serving the exact same stale snapshot forever, never reflecting new data. This was caught because a worker (added well before this session) was silently missing from the kiosk grid; a standalone script running the identical query outside Next.js returned the correct live data, proving the DB and query were fine and the caching layer was at fault. **Fixed in `src/lib/db.ts`** by passing `fetchOptions: { cache: "no-store" }` to `neon()`, and added `export const dynamic = "force-dynamic"` to `src/app/kiosk/page.tsx` (the one route that failed to prerender its no-params fallback shell once fetches could no longer be cached at build time). This is a correctness fix for the live production app, not just this session's testing.
+
+**Verified end-to-end against the live production database** (not just code review): sent two real punches via `/api/biometric/punch` for a worker already checked in/out once today, confirmed a second `attendance_records` row was created with `shiftSequence = 2`; confirmed the Attendance page showed 2 rows with a "Shift 2" badge and the summary counted 1 present (not 2); confirmed Reports showed `present: 1, totalShifts: 2` for the month and the detail page showed both shifts with a "Total Shifts" chip; confirmed the Payroll page correctly split the two shifts across two different closings (since the second shift's check-in happened to fall after the 2:30 PM cutoff) rather than either losing one or double-counting — Rs 800 payable in each of the two closings, matching hand-calculation exactly; confirmed the kiosk grid (after the cache fix) shows the worker with `checkedIn: false` since both shifts are closed.
+
+- Build: 23 routes, compiles cleanly
+
+---
+
+## All 19 steps complete. App is in production; the attendance/payroll pipeline now correctly handles double shifts end-to-end, and a latent stale-data caching bug was found and fixed along the way.

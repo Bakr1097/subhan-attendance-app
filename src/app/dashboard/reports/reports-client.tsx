@@ -22,6 +22,7 @@ export interface WorkerSummary {
   fullName: string;
   deptName: string;
   present: number;
+  totalShifts: number;
   absent: number;
   leave: number;
   noRecord: number;
@@ -79,6 +80,7 @@ function downloadCSV(
     "Name",
     "Department",
     "Present",
+    "Total Shifts",
     "Absent",
     "Leave",
     "No Record",
@@ -91,6 +93,7 @@ function downloadCSV(
     s.fullName,
     s.deptName,
     s.present,
+    s.totalShifts,
     s.absent,
     s.leave,
     s.noRecord,
@@ -101,6 +104,7 @@ function downloadCSV(
   const totals = summaries.reduce(
     (acc, s) => ({
       present: acc.present + s.present,
+      totalShifts: acc.totalShifts + s.totalShifts,
       absent: acc.absent + s.absent,
       leave: acc.leave + s.leave,
       noRecord: acc.noRecord + s.noRecord,
@@ -109,6 +113,7 @@ function downloadCSV(
     }),
     {
       present: 0,
+      totalShifts: 0,
       absent: 0,
       leave: 0,
       noRecord: 0,
@@ -122,6 +127,7 @@ function downloadCSV(
     `${summaries.length} workers`,
     "",
     totals.present,
+    totals.totalShifts,
     totals.absent,
     totals.leave,
     totals.noRecord,
@@ -184,6 +190,7 @@ export function ReportsClient({
   const totals = summaries.reduce(
     (acc, s) => ({
       present: acc.present + s.present,
+      totalShifts: acc.totalShifts + s.totalShifts,
       absent: acc.absent + s.absent,
       leave: acc.leave + s.leave,
       noRecord: acc.noRecord + s.noRecord,
@@ -192,6 +199,7 @@ export function ReportsClient({
     }),
     {
       present: 0,
+      totalShifts: 0,
       absent: 0,
       leave: 0,
       noRecord: 0,
@@ -322,6 +330,7 @@ export function ReportsClient({
                   <TableHead>Name</TableHead>
                   <TableHead className="hidden md:table-cell">Department</TableHead>
                   <TableHead className="text-center">Present</TableHead>
+                  <TableHead className="text-center hidden sm:table-cell">Total Shifts</TableHead>
                   <TableHead className="text-center">Absent</TableHead>
                   <TableHead className="text-center">Leave</TableHead>
                   <TableHead className="text-center hidden sm:table-cell">
@@ -337,7 +346,7 @@ export function ReportsClient({
                 {summaries.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={9}
+                      colSpan={10}
                       className="text-center text-muted-foreground py-10"
                     >
                       No workers found for this period.
@@ -365,6 +374,9 @@ export function ReportsClient({
                           <span className="font-semibold text-green-700">
                             {s.present}
                           </span>
+                        </TableCell>
+                        <TableCell className="text-center hidden sm:table-cell text-sm text-muted-foreground">
+                          {s.totalShifts}
                         </TableCell>
                         <TableCell className="text-center">
                           <span
@@ -428,6 +440,9 @@ export function ReportsClient({
                       <TableCell className="hidden md:table-cell" />
                       <TableCell className="text-center text-green-700">
                         {totals.present}
+                      </TableCell>
+                      <TableCell className="text-center hidden sm:table-cell">
+                        {totals.totalShifts}
                       </TableCell>
                       <TableCell className="text-center text-red-600">
                         {totals.absent}

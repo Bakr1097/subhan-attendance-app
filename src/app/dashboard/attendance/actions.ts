@@ -58,9 +58,23 @@ async function writeAudit(
   });
 }
 
+async function nextShiftSequence(workerId: string, workDate: string): Promise<number> {
+  const sameDay = await db
+    .select({ id: attendanceRecords.id })
+    .from(attendanceRecords)
+    .where(
+      and(
+        eq(attendanceRecords.workerId, workerId),
+        eq(attendanceRecords.workDate, workDate)
+      )
+    );
+  return sameDay.length + 1;
+}
+
 // ─── correctAttendance ────────────────────────────────────────────────────────
 
 export interface CorrectionPayload {
+  recordId: string | null;
   workerId: string;
   workDate: string;
   terminalId: string;
@@ -101,17 +115,21 @@ export async function correctAttendance(payload: CorrectionPayload) {
         checkoutMissing: false,
       };
 
-  // Load existing record to capture before-snapshot and decide insert vs update
-  const [existing] = await db
-    .select()
-    .from(attendanceRecords)
-    .where(
-      and(
-        eq(attendanceRecords.workerId, payload.workerId),
-        eq(attendanceRecords.workDate, payload.workDate)
-      )
-    )
-    .limit(1);
+  // Editing a specific row (Step 19: a worker can have several same-day
+  // records, so we target this one by id rather than by workerId+workDate).
+  let existing: typeof attendanceRecords.$inferSelect | null = null;
+  if (payload.recordId) {
+    const [row] = await db
+      .select()
+      .from(attendanceRecords)
+      .where(eq(attendanceRecords.id, payload.recordId))
+      .limit(1);
+    if (!row) throw new Error("Attendance record not found");
+    if (row.workerId !== payload.workerId) {
+      throw new Error("Record does not belong to this worker");
+    }
+    existing = row;
+  }
 
   const before: Record<string, unknown> | null = existing
     ? {
@@ -152,6 +170,8 @@ export async function correctAttendance(payload: CorrectionPayload) {
       .where(eq(attendanceRecords.id, existing.id));
     recordId = existing.id;
   } else {
+    const shiftSequence = await nextShiftSequence(payload.workerId, payload.workDate);
+
     const [inserted] = await db
       .insert(attendanceRecords)
       .values({
@@ -159,6 +179,7 @@ export async function correctAttendance(payload: CorrectionPayload) {
         terminalId: payload.terminalId,
         departmentId: payload.departmentId,
         workDate: payload.workDate,
+        shiftSequence,
         resolvedShiftId: shiftId,
         checkInAt,
         checkOutAt,
@@ -191,7 +212,7 @@ export async function markAbsent(
 ) {
   const session = await requireAccess(workerId);
 
-  const [existing] = await db
+  const existingRecords = await db
     .select()
     .from(attendanceRecords)
     .where(
@@ -199,8 +220,15 @@ export async function markAbsent(
         eq(attendanceRecords.workerId, workerId),
         eq(attendanceRecords.workDate, workDate)
       )
-    )
-    .limit(1);
+    );
+
+  if (existingRecords.length > 1) {
+    throw new Error(
+      "This worker has multiple shift records for this date — edit them individually instead of marking absent."
+    );
+  }
+
+  const existing = existingRecords[0] ?? null;
 
   const before: Record<string, unknown> | null = existing
     ? {
@@ -220,6 +248,7 @@ export async function markAbsent(
     checkOutPhotoUrl: null,
     leaveReason: null,
     resolvedShiftId: null,
+    shiftSequence: null,
     isLate: false,
     lateMinutes: 0,
     leftEarly: false,
@@ -265,7 +294,7 @@ export async function markLeave(
 ) {
   const session = await requireAccess(workerId);
 
-  const [existing] = await db
+  const existingRecords = await db
     .select()
     .from(attendanceRecords)
     .where(
@@ -273,8 +302,15 @@ export async function markLeave(
         eq(attendanceRecords.workerId, workerId),
         eq(attendanceRecords.workDate, workDate)
       )
-    )
-    .limit(1);
+    );
+
+  if (existingRecords.length > 1) {
+    throw new Error(
+      "This worker has multiple shift records for this date — edit them individually instead of marking leave."
+    );
+  }
+
+  const existing = existingRecords[0] ?? null;
 
   const before: Record<string, unknown> | null = existing
     ? {
@@ -295,6 +331,7 @@ export async function markLeave(
     checkInPhotoUrl: null,
     checkOutPhotoUrl: null,
     resolvedShiftId: null,
+    shiftSequence: null,
     isLate: false,
     lateMinutes: 0,
     leftEarly: false,

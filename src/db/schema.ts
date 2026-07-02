@@ -108,44 +108,44 @@ export const shiftAssignments = pgTable(
   })
 );
 
-export const attendanceRecords = pgTable(
-  "attendance_records",
-  {
-    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-    workerId: uuid("worker_id")
-      .notNull()
-      .references(() => workers.id),
-    terminalId: uuid("terminal_id")
-      .notNull()
-      .references(() => terminals.id),
-    departmentId: uuid("department_id")
-      .notNull()
-      .references(() => departments.id),
-    workDate: date("work_date").notNull(),
-    resolvedShiftId: uuid("resolved_shift_id").references(() => shifts.id),
-    checkInAt: timestamp("check_in_at", { withTimezone: true }),
-    checkInPhotoUrl: text("check_in_photo_url"),
-    checkOutAt: timestamp("check_out_at", { withTimezone: true }),
-    checkOutPhotoUrl: text("check_out_photo_url"),
-    status: text("status")
-      .$type<"present" | "absent" | "leave">()
-      .notNull()
-      .default("present"),
-    leaveReason: text("leave_reason"),
-    isLate: boolean("is_late").notNull().default(false),
-    lateMinutes: integer("late_minutes").notNull().default(0),
-    leftEarly: boolean("left_early").notNull().default(false),
-    earlyLeaveMinutes: integer("early_leave_minutes").notNull().default(0),
-    overtimeMinutes: integer("overtime_minutes").notNull().default(0),
-    workedMinutes: integer("worked_minutes"),
-    checkoutMissing: boolean("checkout_missing").notNull().default(false),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-  },
-  (t) => ({
-    workerDateUnique: unique().on(t.workerId, t.workDate),
-  })
-);
+// Step 19: a worker can have MULTIPLE records on the same workDate (double
+// shifts) — no longer unique on (workerId, workDate). shiftSequence (1, 2, …)
+// makes same-day records human-readable; which record is "open" right now
+// (checkInAt set, checkOutAt null) is what the punch-resolution logic keys
+// off of, not workDate.
+export const attendanceRecords = pgTable("attendance_records", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  workerId: uuid("worker_id")
+    .notNull()
+    .references(() => workers.id),
+  terminalId: uuid("terminal_id")
+    .notNull()
+    .references(() => terminals.id),
+  departmentId: uuid("department_id")
+    .notNull()
+    .references(() => departments.id),
+  workDate: date("work_date").notNull(),
+  shiftSequence: integer("shift_sequence"),
+  resolvedShiftId: uuid("resolved_shift_id").references(() => shifts.id),
+  checkInAt: timestamp("check_in_at", { withTimezone: true }),
+  checkInPhotoUrl: text("check_in_photo_url"),
+  checkOutAt: timestamp("check_out_at", { withTimezone: true }),
+  checkOutPhotoUrl: text("check_out_photo_url"),
+  status: text("status")
+    .$type<"present" | "absent" | "leave">()
+    .notNull()
+    .default("present"),
+  leaveReason: text("leave_reason"),
+  isLate: boolean("is_late").notNull().default(false),
+  lateMinutes: integer("late_minutes").notNull().default(0),
+  leftEarly: boolean("left_early").notNull().default(false),
+  earlyLeaveMinutes: integer("early_leave_minutes").notNull().default(0),
+  overtimeMinutes: integer("overtime_minutes").notNull().default(0),
+  workedMinutes: integer("worked_minutes"),
+  checkoutMissing: boolean("checkout_missing").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
 
 export const auditLog = pgTable("audit_log", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),

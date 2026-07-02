@@ -6,7 +6,6 @@ import {
   departments,
   workers,
   supervisorScopes,
-  shiftAssignments,
   shifts,
   attendanceRecords,
 } from "@/db/schema";
@@ -97,7 +96,6 @@ export default async function DashboardPage() {
       ? await db
           .select({
             id: workers.id,
-            defaultShiftId: workers.defaultShiftId,
             payType: workers.payType,
             dailyRate: workers.dailyRate,
           })
@@ -112,36 +110,9 @@ export default async function DashboardPage() {
 
   const workerIds = scopedWorkers.map((w) => w.id);
 
-  const overrides =
-    workerIds.length > 0
-      ? await db
-          .select({
-            workerId: shiftAssignments.workerId,
-            shiftId: shiftAssignments.shiftId,
-          })
-          .from(shiftAssignments)
-          .where(
-            and(
-              eq(shiftAssignments.workDate, today),
-              inArray(shiftAssignments.workerId, workerIds)
-            )
-          )
-      : [];
-  const overrideMap = new Map(overrides.map((o) => [o.workerId, o.shiftId]));
-
-  const shiftIds = new Set<string>();
-  scopedWorkers.forEach((w) => { if (w.defaultShiftId) shiftIds.add(w.defaultShiftId); });
-  overrides.forEach((o) => shiftIds.add(o.shiftId));
-
-  const shiftRows =
-    shiftIds.size > 0
-      ? await db
-          .select()
-          .from(shifts)
-          .where(inArray(shifts.id, Array.from(shiftIds)))
-      : [];
-  const shiftMap = new Map(shiftRows.map((s) => [s.id, s]));
-
+  // A worker may have multiple records today (Step 19 double shifts). Each
+  // record already stores the shift that was resolved at check-in time, so
+  // there's no need to separately re-resolve today's shift_assignments here.
   const records =
     workerIds.length > 0
       ? await db
@@ -154,7 +125,23 @@ export default async function DashboardPage() {
             )
           )
       : [];
-  const recordMap = new Map(records.map((r) => [r.workerId, r]));
+  const recordsByWorker = new Map<string, typeof records>();
+  for (const r of records) {
+    if (!recordsByWorker.has(r.workerId)) recordsByWorker.set(r.workerId, []);
+    recordsByWorker.get(r.workerId)!.push(r);
+  }
+
+  const shiftIds = new Set<string>();
+  records.forEach((r) => { if (r.resolvedShiftId) shiftIds.add(r.resolvedShiftId); });
+
+  const shiftRows =
+    shiftIds.size > 0
+      ? await db
+          .select()
+          .from(shifts)
+          .where(inArray(shifts.id, Array.from(shiftIds)))
+      : [];
+  const shiftMap = new Map(shiftRows.map((s) => [s.id, s]));
 
   // Payable figure uses the Step 18 closing-window model (not calendar day) so
   // it matches what the Payroll page would show for a closing run today.
@@ -176,29 +163,36 @@ export default async function DashboardPage() {
   let missingCheckoutToday = 0;
   let payableToday = 0;
 
-  for (const w of scopedWorkers) {
-    const record = recordMap.get(w.id) ?? null;
-    if (record?.status === "present") presentToday++;
-    if (record?.status === "absent") absentToday++;
-    if (record?.isLate) lateToday++;
-
-    const resolvedShiftId = overrideMap.get(w.id) ?? w.defaultShiftId ?? null;
-    const shiftRow = resolvedShiftId ? shiftMap.get(resolvedShiftId) : null;
-    const shiftData: ShiftData | null = shiftRow
+  function toShiftData(shiftId: string | null): ShiftData | null {
+    const row = shiftId ? shiftMap.get(shiftId) : null;
+    return row
       ? {
-          startTime: shiftRow.startTime,
-          endTime: shiftRow.endTime,
-          graceMinutes: shiftRow.graceMinutes,
-          earlyLeaveGraceMinutes: shiftRow.earlyLeaveGraceMinutes,
-          crossesMidnight: shiftRow.crossesMidnight,
+          startTime: row.startTime,
+          endTime: row.endTime,
+          graceMinutes: row.graceMinutes,
+          earlyLeaveGraceMinutes: row.earlyLeaveGraceMinutes,
+          crossesMidnight: row.crossesMidnight,
         }
       : null;
+  }
 
-    const checkoutMissing =
-      record?.checkInAt && !record?.checkOutAt && shiftData
-        ? flagMissingCheckout(record.checkInAt, null, shiftData, today, now)
-        : (record?.checkoutMissing ?? false);
-    if (checkoutMissing) missingCheckoutToday++;
+  for (const w of scopedWorkers) {
+    // Present/absent are per-WORKER (a double shift is still one present
+    // person); late/missing-checkout stay per-SHIFT (row-level).
+    const recs = recordsByWorker.get(w.id) ?? [];
+    if (recs.some((r) => r.status === "present")) presentToday++;
+    if (recs.some((r) => r.status === "absent")) absentToday++;
+
+    for (const record of recs) {
+      if (record.isLate) lateToday++;
+
+      const shiftData = toShiftData(record.resolvedShiftId);
+      const checkoutMissing =
+        record.checkInAt && !record.checkOutAt && shiftData
+          ? flagMissingCheckout(record.checkInAt, null, shiftData, today, now)
+          : record.checkoutMissing;
+      if (checkoutMissing) missingCheckoutToday++;
+    }
 
     if (isAdmin && w.payType === "daily") {
       const computed = payrollComputedMap.get(w.id);

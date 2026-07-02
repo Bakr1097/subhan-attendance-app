@@ -72,7 +72,7 @@ export default async function WorkerDetailPage({
     if (!allowed) redirect("/dashboard/reports");
   }
 
-  // ── Attendance records for the month ──────────────────────────────────────────
+  // ── Attendance records for the month — a day may have several (Step 19) ──────
   const records = await db
     .select()
     .from(attendanceRecords)
@@ -84,7 +84,14 @@ export default async function WorkerDetailPage({
       )
     );
 
-  const recordMap = new Map(records.map((r) => [r.workDate, r]));
+  const recordsByDate = new Map<string, typeof records>();
+  for (const r of records) {
+    if (!recordsByDate.has(r.workDate)) recordsByDate.set(r.workDate, []);
+    recordsByDate.get(r.workDate)!.push(r);
+  }
+  for (const list of Array.from(recordsByDate.values())) {
+    list.sort((a, b) => (a.shiftSequence ?? 0) - (b.shiftSequence ?? 0));
+  }
 
   // ── Shift overrides for the month ─────────────────────────────────────────────
   const overrides = await db
@@ -103,10 +110,11 @@ export default async function WorkerDetailPage({
 
   const overrideMap = new Map(overrides.map((o) => [o.workDate, o.shiftId]));
 
-  // ── Load all referenced shifts ────────────────────────────────────────────────
+  // ── Load all referenced shifts — worker default/overrides AND each record's own ─
   const shiftIds = new Set<string>();
   if (worker.defaultShiftId) shiftIds.add(worker.defaultShiftId);
   overrides.forEach((o) => shiftIds.add(o.shiftId));
+  records.forEach((r) => { if (r.resolvedShiftId) shiftIds.add(r.resolvedShiftId); });
 
   const shiftRows =
     shiftIds.size > 0
@@ -118,43 +126,76 @@ export default async function WorkerDetailPage({
 
   const shiftMap = new Map(shiftRows.map((s) => [s.id, s.name]));
 
-  // ── Build day entries ─────────────────────────────────────────────────────────
+  // ── Build day entries — one row per record, or one placeholder row ───────────
   const allDays = getDaysInMonth(month);
 
-  const dayEntries: DayEntry[] = allDays.map((date) => {
-    const record = recordMap.get(date) ?? null;
-    const resolvedShiftId =
-      overrideMap.get(date) ?? worker.defaultShiftId ?? null;
-    const shiftName = resolvedShiftId
-      ? (shiftMap.get(resolvedShiftId) ?? null)
-      : null;
+  const dayEntries: DayEntry[] = allDays.flatMap((date): DayEntry[] => {
+    const recs = recordsByDate.get(date) ?? [];
 
-    return {
+    if (recs.length === 0) {
+      const resolvedShiftId =
+        overrideMap.get(date) ?? worker.defaultShiftId ?? null;
+      const shiftName = resolvedShiftId
+        ? (shiftMap.get(resolvedShiftId) ?? null)
+        : null;
+
+      return [
+        {
+          date,
+          shiftSequence: null,
+          shiftName,
+          checkInAt: null,
+          checkOutAt: null,
+          status: null,
+          workedMinutes: null,
+          isLate: false,
+          lateMinutes: 0,
+          leftEarly: false,
+          earlyLeaveMinutes: 0,
+          overtimeMinutes: 0,
+          checkoutMissing: false,
+          leaveReason: null,
+        },
+      ];
+    }
+
+    return recs.map((record) => ({
       date,
-      shiftName,
-      checkInAt: record?.checkInAt?.toISOString() ?? null,
-      checkOutAt: record?.checkOutAt?.toISOString() ?? null,
-      status: record?.status ?? null,
-      workedMinutes: record?.workedMinutes ?? null,
-      isLate: record?.isLate ?? false,
-      lateMinutes: record?.lateMinutes ?? 0,
-      leftEarly: record?.leftEarly ?? false,
-      earlyLeaveMinutes: record?.earlyLeaveMinutes ?? 0,
-      overtimeMinutes: record?.overtimeMinutes ?? 0,
-      checkoutMissing: record?.checkoutMissing ?? false,
-      leaveReason: record?.leaveReason ?? null,
-    };
+      shiftSequence: record.shiftSequence,
+      shiftName: record.resolvedShiftId
+        ? (shiftMap.get(record.resolvedShiftId) ?? null)
+        : null,
+      checkInAt: record.checkInAt?.toISOString() ?? null,
+      checkOutAt: record.checkOutAt?.toISOString() ?? null,
+      status: record.status,
+      workedMinutes: record.workedMinutes,
+      isLate: record.isLate,
+      lateMinutes: record.lateMinutes,
+      leftEarly: record.leftEarly,
+      earlyLeaveMinutes: record.earlyLeaveMinutes,
+      overtimeMinutes: record.overtimeMinutes,
+      checkoutMissing: record.checkoutMissing,
+      leaveReason: record.leaveReason,
+    }));
   });
 
+  const presentDays = new Set(
+    records.filter((r) => r.status === "present").map((r) => r.workDate)
+  ).size;
+  const absentDays = new Set(
+    records.filter((r) => r.status === "absent").map((r) => r.workDate)
+  ).size;
+  const leaveDays = new Set(
+    records.filter((r) => r.status === "leave").map((r) => r.workDate)
+  ).size;
+
   const stats = {
-    present: dayEntries.filter((d) => d.status === "present").length,
-    absent: dayEntries.filter((d) => d.status === "absent").length,
-    leave: dayEntries.filter((d) => d.status === "leave").length,
-    totalWorkedMinutes: dayEntries.reduce(
-      (s, d) => s + (d.workedMinutes ?? 0),
-      0
-    ),
-    lateCount: dayEntries.filter((d) => d.isLate).length,
+    present: presentDays,
+    totalShifts: records.filter((r) => r.status === "present").length,
+    absent: absentDays,
+    leave: leaveDays,
+    totalWorkedMinutes: records.reduce((s, r) => s + (r.workedMinutes ?? 0), 0),
+    lateCount: records.filter((r) => r.isLate).length,
   };
 
   return (

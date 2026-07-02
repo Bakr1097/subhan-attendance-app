@@ -129,11 +129,15 @@ export default async function ReportsPage({
   const workerIds = workerRows.map((w) => w.id);
 
   // ── Attendance records for the month ─────────────────────────────────────────
+  // A worker may have multiple records on the same workDate (Step 19 double
+  // shifts), so "present days" must dedupe by workDate while "Total Shifts"
+  // counts every row — that's what makes doubles visible.
   const records =
     workerIds.length > 0
       ? await db
           .select({
             workerId: attendanceRecords.workerId,
+            workDate: attendanceRecords.workDate,
             status: attendanceRecords.status,
             workedMinutes: attendanceRecords.workedMinutes,
             isLate: attendanceRecords.isLate,
@@ -158,10 +162,13 @@ export default async function ReportsPage({
 
   const summaries: WorkerSummary[] = workerRows.map((w) => {
     const recs = byWorker.get(w.id) ?? [];
-    const present = recs.filter((r) => r.status === "present").length;
-    const absent = recs.filter((r) => r.status === "absent").length;
-    const leave = recs.filter((r) => r.status === "leave").length;
-    const noRecord = Math.max(0, elapsed - recs.length);
+    const presentRecs = recs.filter((r) => r.status === "present");
+    const present = new Set(presentRecs.map((r) => r.workDate)).size;
+    const totalShifts = presentRecs.length;
+    const absent = new Set(recs.filter((r) => r.status === "absent").map((r) => r.workDate)).size;
+    const leave = new Set(recs.filter((r) => r.status === "leave").map((r) => r.workDate)).size;
+    const recordedDays = new Set(recs.map((r) => r.workDate)).size;
+    const noRecord = Math.max(0, elapsed - recordedDays);
     const totalWorkedMinutes = recs.reduce(
       (s, r) => s + (r.workedMinutes ?? 0),
       0
@@ -174,6 +181,7 @@ export default async function ReportsPage({
       fullName: w.fullName,
       deptName: w.deptName ?? "—",
       present,
+      totalShifts,
       absent,
       leave,
       noRecord,

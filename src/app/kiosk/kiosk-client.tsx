@@ -18,8 +18,10 @@ export interface WorkerEntry {
   fullName: string;
   referencePhotoUrl: string | null;
   deptName: string;
+  // Has an open (checked-in, not checked-out) shift right now. Once a shift
+  // is closed this goes back to false so the worker can check in again for
+  // another shift the same day (Step 19) — it does not mean "done for today".
   checkedIn: boolean;
-  checkedOut: boolean;
 }
 
 type KioskStage =
@@ -323,17 +325,8 @@ function WorkerCard({
   worker: WorkerEntry;
   onClick: () => void;
 }) {
-  const statusLabel = worker.checkedOut
-    ? "Done"
-    : worker.checkedIn
-    ? "In"
-    : null;
-
-  const statusColor = worker.checkedOut
-    ? "bg-blue-500"
-    : worker.checkedIn
-    ? "bg-green-500"
-    : null;
+  const statusLabel = worker.checkedIn ? "In" : null;
+  const statusColor = worker.checkedIn ? "bg-green-500" : null;
 
   return (
     <button
@@ -418,7 +411,7 @@ export function KioskClient({
               setWorkers((prev) =>
                 prev.map((w) =>
                   w.id === punch.workerId
-                    ? { ...w, checkedIn: true, checkedOut: data.action === "check-out" }
+                    ? { ...w, checkedIn: data.action === "check-in" }
                     : w
                 )
               );
@@ -541,7 +534,7 @@ export function KioskClient({
       setWorkers((prev) =>
         prev.map((w) =>
           w.id === worker.id
-            ? { ...w, checkedIn: true, checkedOut: action === "check-out" }
+            ? { ...w, checkedIn: action === "check-in" }
             : w
         )
       );
@@ -567,7 +560,7 @@ export function KioskClient({
       setWorkers((prev) =>
         prev.map((w) =>
           w.id === worker.id
-            ? { ...w, checkedIn: true, checkedOut: data.action === "check-out" }
+            ? { ...w, checkedIn: data.action === "check-in" }
             : w
         )
       );
@@ -587,7 +580,7 @@ export function KioskClient({
       setWorkers((prev) =>
         prev.map((w) =>
           w.id === worker.id
-            ? { ...w, checkedIn: true, checkedOut: action === "check-out" }
+            ? { ...w, checkedIn: action === "check-in" }
             : w
         )
       );

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workers, departments, attendanceRecords } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull, isNotNull } from "drizzle-orm";
 
 export async function GET(req: NextRequest) {
   const terminalId = req.nextUrl.searchParams.get("terminal");
@@ -28,37 +28,33 @@ export async function GET(req: NextRequest) {
     .where(and(eq(workers.terminalId, terminalId), eq(workers.status, "active")))
     .orderBy(workers.fullName);
 
-  const records =
+  // "Checked in" means "has an open shift right now" — regardless of
+  // workDate, so an overnight shift still shows correctly, and once a shift
+  // is closed a worker is available to check in again the same day (Step 19).
+  const openRecords =
     workerRows.length > 0
       ? await db
-          .select({
-            workerId: attendanceRecords.workerId,
-            checkInAt: attendanceRecords.checkInAt,
-            checkOutAt: attendanceRecords.checkOutAt,
-          })
+          .select({ workerId: attendanceRecords.workerId })
           .from(attendanceRecords)
           .where(
             and(
               eq(attendanceRecords.terminalId, terminalId),
-              eq(attendanceRecords.workDate, workDate)
+              isNotNull(attendanceRecords.checkInAt),
+              isNull(attendanceRecords.checkOutAt)
             )
           )
       : [];
 
-  const recordMap = new Map(records.map((r) => [r.workerId, r]));
+  const openSet = new Set(openRecords.map((r) => r.workerId));
 
-  const result = workerRows.map((w) => {
-    const rec = recordMap.get(w.id);
-    return {
-      id: w.id,
-      employeeCode: w.employeeCode,
-      fullName: w.fullName,
-      referencePhotoUrl: w.referencePhotoUrl ?? null,
-      deptName: w.deptName ?? "—",
-      checkedIn: !!rec?.checkInAt,
-      checkedOut: !!rec?.checkOutAt,
-    };
-  });
+  const result = workerRows.map((w) => ({
+    id: w.id,
+    employeeCode: w.employeeCode,
+    fullName: w.fullName,
+    referencePhotoUrl: w.referencePhotoUrl ?? null,
+    deptName: w.deptName ?? "—",
+    checkedIn: openSet.has(w.id),
+  }));
 
   return NextResponse.json({ workers: result });
 }

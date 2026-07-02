@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { compare } from "bcryptjs";
 import { db } from "@/lib/db";
-import { workers, attendanceRecords } from "@/db/schema";
+import { workers } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { uploadToR2 } from "@/lib/r2";
-import { computeLate, computeAllFlags, computeWorkedMinutes } from "@/lib/attendance";
-import { resolveShiftForWorker } from "@/lib/shift-resolution";
+import { resolvePunch } from "@/lib/punch-resolution";
 
 export async function POST(req: NextRequest) {
   let body: { workerId?: string; pin?: string; photoBase64?: string | null; workDate?: string };
@@ -60,111 +59,30 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Check existing attendance record for today
-  const [existing] = await db
-    .select()
-    .from(attendanceRecords)
-    .where(
-      and(
-        eq(attendanceRecords.workerId, workerId),
-        eq(attendanceRecords.workDate, workDate)
-      )
-    )
-    .limit(1);
-
-  if (existing?.checkInAt && existing?.checkOutAt) {
-    return NextResponse.json(
-      { error: "Attendance is already complete for today." },
-      { status: 409 }
-    );
-  }
-
-  // Resolve shift (override first, then worker default)
-  const { shiftId: resolvedShiftId, shiftData } = await resolveShiftForWorker(
-    workerId,
-    workDate,
-    worker.defaultShiftId ?? null
-  );
-
   const now = new Date();
-
   const hours = now.getHours();
   const minutes = now.getMinutes();
   const ampm = hours >= 12 ? "PM" : "AM";
   const h12 = hours % 12 || 12;
   const timeStr = `${String(h12).padStart(2, "0")}:${String(minutes).padStart(2, "0")} ${ampm}`;
 
-  // ── CHECK-IN ──────────────────────────────────────────────────────────────────
-  if (!existing?.checkInAt) {
-    const { isLate, lateMinutes } = shiftData
-      ? computeLate(now, shiftData, workDate)
-      : { isLate: false, lateMinutes: 0 };
-
-    await db
-      .insert(attendanceRecords)
-      .values({
-        workerId,
-        terminalId: worker.terminalId,
-        departmentId: worker.departmentId,
-        workDate,
-        resolvedShiftId,
-        checkInAt: now,
-        checkInPhotoUrl: photoUrl,
-        status: "present",
-        isLate,
-        lateMinutes,
-        leftEarly: false,
-        earlyLeaveMinutes: 0,
-        overtimeMinutes: 0,
-        workedMinutes: null,
-        checkoutMissing: false,
-      })
-      .onConflictDoUpdate({
-        target: [attendanceRecords.workerId, attendanceRecords.workDate],
-        set: {
-          checkInAt: now,
-          checkInPhotoUrl: photoUrl,
-          resolvedShiftId,
-          isLate,
-          lateMinutes,
-          updatedAt: now,
-        },
-      });
-
-    return NextResponse.json({
-      action: "check-in",
-      workerName: worker.fullName,
-      timestamp: timeStr,
-    });
-  }
-
-  // ── CHECK-OUT ─────────────────────────────────────────────────────────────────
-  const checkInAt = existing.checkInAt!;
-
-  const flags = shiftData
-    ? computeAllFlags(checkInAt, now, shiftData, workDate, now)
-    : {
-        isLate: existing.isLate,
-        lateMinutes: existing.lateMinutes,
-        leftEarly: false,
-        earlyLeaveMinutes: 0,
-        overtimeMinutes: 0,
-        workedMinutes: computeWorkedMinutes(checkInAt, now),
-        checkoutMissing: false,
-      };
-
-  await db
-    .update(attendanceRecords)
-    .set({
-      checkOutAt: now,
-      checkOutPhotoUrl: photoUrl,
-      ...flags,
-      updatedAt: now,
-    })
-    .where(eq(attendanceRecords.id, existing.id));
+  // A new check-in is only allowed when the worker has no open shift; if one
+  // exists, this punch closes it instead — this is what allows a genuine
+  // second shift the same day (Step 19) once the first has been checked out.
+  const outcome = await resolvePunch(
+    {
+      id: worker.id,
+      terminalId: worker.terminalId,
+      departmentId: worker.departmentId,
+      defaultShiftId: worker.defaultShiftId,
+    },
+    workDate,
+    now,
+    { checkInPhotoUrl: photoUrl, checkOutPhotoUrl: photoUrl }
+  );
 
   return NextResponse.json({
-    action: "check-out",
+    action: outcome.action,
     workerName: worker.fullName,
     timestamp: timeStr,
   });

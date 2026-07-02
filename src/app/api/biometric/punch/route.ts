@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { workers, shifts, attendanceRecords } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
-import { computeLate, computeAllFlags, computeWorkedMinutes } from "@/lib/attendance";
-import { resolveShiftForWorker } from "@/lib/shift-resolution";
+import { workers } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { resolvePunch } from "@/lib/punch-resolution";
 
 interface Punch {
   deviceUserId: string;
@@ -12,57 +11,6 @@ interface Punch {
 
 function utcDateStr(d: Date): string {
   return d.toISOString().slice(0, 10);
-}
-
-function previousDay(workDate: string): string {
-  const d = new Date(`${workDate}T00:00:00.000Z`);
-  d.setUTCDate(d.getUTCDate() - 1);
-  return utcDateStr(d);
-}
-
-/**
- * Determines the attendance_records work date for a punch.
- *
- * The bridge only sends a raw timestamp — unlike the kiosk, there is no
- * client telling us "today". For a worker whose default shift crosses
- * midnight, a punch landing in the early hours of a calendar day may
- * actually be the checkout for the shift that started the day before, so
- * we check for a still-open record on the previous day first.
- */
-async function resolveWorkDate(
-  workerId: string,
-  defaultShiftId: string | null,
-  timestamp: Date
-): Promise<string> {
-  const rawDate = utcDateStr(timestamp);
-  if (!defaultShiftId) return rawDate;
-
-  const [shiftRow] = await db
-    .select({ crossesMidnight: shifts.crossesMidnight })
-    .from(shifts)
-    .where(eq(shifts.id, defaultShiftId))
-    .limit(1);
-
-  if (!shiftRow?.crossesMidnight) return rawDate;
-
-  const prevDate = previousDay(rawDate);
-  const [prevRecord] = await db
-    .select({
-      checkInAt: attendanceRecords.checkInAt,
-      checkOutAt: attendanceRecords.checkOutAt,
-    })
-    .from(attendanceRecords)
-    .where(
-      and(
-        eq(attendanceRecords.workerId, workerId),
-        eq(attendanceRecords.workDate, prevDate)
-      )
-    )
-    .limit(1);
-
-  if (prevRecord?.checkInAt && !prevRecord.checkOutAt) return prevDate;
-
-  return rawDate;
 }
 
 export async function POST(req: NextRequest) {
@@ -83,7 +31,7 @@ export async function POST(req: NextRequest) {
   let checkedIn = 0;
   let checkedOut = 0;
   let duplicates = 0;
-  let alreadyComplete = 0;
+  const alreadyComplete = 0;
   const unmatched: string[] = [];
 
   for (const raw of rawPunches) {
@@ -109,109 +57,31 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const workDate = await resolveWorkDate(
-      worker.id,
-      worker.defaultShiftId,
+    // The bridge only sends a raw timestamp — there is no client telling us
+    // "today" like the kiosk. This workDate is only used if the punch turns
+    // out to be a NEW check-in; an overnight shift's checkout is found and
+    // closed by resolvePunch() regardless of workDate (Step 19), so there is
+    // no need to guess "does this belong to yesterday's night shift" here.
+    const workDate = utcDateStr(timestamp);
+
+    const outcome = await resolvePunch(
+      {
+        id: worker.id,
+        terminalId: worker.terminalId,
+        departmentId: worker.departmentId,
+        defaultShiftId: worker.defaultShiftId,
+      },
+      workDate,
       timestamp
     );
 
-    const { shiftId, shiftData } = await resolveShiftForWorker(
-      worker.id,
-      workDate,
-      worker.defaultShiftId
-    );
-
-    const [existing] = await db
-      .select()
-      .from(attendanceRecords)
-      .where(
-        and(
-          eq(attendanceRecords.workerId, worker.id),
-          eq(attendanceRecords.workDate, workDate)
-        )
-      )
-      .limit(1);
-
-    const isDuplicate =
-      (existing?.checkInAt &&
-        existing.checkInAt.getTime() === timestamp.getTime()) ||
-      (existing?.checkOutAt &&
-        existing.checkOutAt.getTime() === timestamp.getTime());
-
-    if (isDuplicate) {
+    if (outcome.action === "duplicate") {
       duplicates++;
-      continue;
-    }
-
-    // ── CHECK-IN ────────────────────────────────────────────────────────────
-    if (!existing?.checkInAt) {
-      const { isLate, lateMinutes } = shiftData
-        ? computeLate(timestamp, shiftData, workDate)
-        : { isLate: false, lateMinutes: 0 };
-
-      await db
-        .insert(attendanceRecords)
-        .values({
-          workerId: worker.id,
-          terminalId: worker.terminalId,
-          departmentId: worker.departmentId,
-          workDate,
-          resolvedShiftId: shiftId,
-          checkInAt: timestamp,
-          status: "present",
-          isLate,
-          lateMinutes,
-          leftEarly: false,
-          earlyLeaveMinutes: 0,
-          overtimeMinutes: 0,
-          workedMinutes: null,
-          checkoutMissing: false,
-        })
-        .onConflictDoUpdate({
-          target: [attendanceRecords.workerId, attendanceRecords.workDate],
-          set: {
-            checkInAt: timestamp,
-            resolvedShiftId: shiftId,
-            isLate,
-            lateMinutes,
-            updatedAt: new Date(),
-          },
-        });
-
+    } else if (outcome.action === "check-in") {
       checkedIn++;
-      continue;
-    }
-
-    // ── CHECK-OUT ───────────────────────────────────────────────────────────
-    if (!existing.checkOutAt) {
-      const now = new Date();
-      const flags = shiftData
-        ? computeAllFlags(existing.checkInAt, timestamp, shiftData, workDate, now)
-        : {
-            isLate: existing.isLate,
-            lateMinutes: existing.lateMinutes,
-            leftEarly: false,
-            earlyLeaveMinutes: 0,
-            overtimeMinutes: 0,
-            workedMinutes: computeWorkedMinutes(existing.checkInAt, timestamp),
-            checkoutMissing: false,
-          };
-
-      await db
-        .update(attendanceRecords)
-        .set({
-          checkOutAt: timestamp,
-          ...flags,
-          updatedAt: now,
-        })
-        .where(eq(attendanceRecords.id, existing.id));
-
+    } else {
       checkedOut++;
-      continue;
     }
-
-    // ── ALREADY COMPLETE ────────────────────────────────────────────────────
-    alreadyComplete++;
   }
 
   return NextResponse.json({

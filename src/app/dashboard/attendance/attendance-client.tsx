@@ -44,6 +44,7 @@ export interface AttendanceEntry {
   shiftStart: string | null;
   shiftEnd: string | null;
   recordId: string | null;
+  shiftSequence: number | null;
   checkInAt: string | null;
   checkOutAt: string | null;
   status: "present" | "absent" | "leave" | null;
@@ -127,6 +128,7 @@ function EditDialog({
 
   function handleSave() {
     const payload: CorrectionPayload = {
+      recordId: entry.recordId,
       workerId: entry.workerId,
       workDate,
       terminalId: entry.terminalId,
@@ -316,6 +318,10 @@ function RowActions({
     });
   }
 
+  // Absent/Leave only make sense on the "no record yet" placeholder row — a
+  // worker with a real shift row is clearly present, not absent (Step 19).
+  const isPlaceholderRow = entry.recordId === null;
+
   return (
     <>
       <div className="flex items-center gap-1 justify-end">
@@ -327,23 +333,27 @@ function RowActions({
         >
           Edit
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-xs h-7 px-2 text-muted-foreground hover:text-foreground"
-          onClick={handleAbsent}
-          disabled={absentPending}
-        >
-          {absentPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Absent"}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-xs h-7 px-2 text-muted-foreground hover:text-foreground"
-          onClick={() => setLeaveOpen(true)}
-        >
-          Leave
-        </Button>
+        {isPlaceholderRow && (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs h-7 px-2 text-muted-foreground hover:text-foreground"
+              onClick={handleAbsent}
+              disabled={absentPending}
+            >
+              {absentPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Absent"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs h-7 px-2 text-muted-foreground hover:text-foreground"
+              onClick={() => setLeaveOpen(true)}
+            >
+              Leave
+            </Button>
+          </>
+        )}
       </div>
 
       {editOpen && (
@@ -420,11 +430,25 @@ export function AttendanceClient({
   }
 
   // ── Summary counts ──────────────────────────────────────────────────────────
-  const total = entries.length;
-  const present = entries.filter((e) => e.status === "present").length;
-  const absent = entries.filter((e) => e.status === "absent").length;
-  const onLeave = entries.filter((e) => e.status === "leave").length;
-  const noRecord = entries.filter((e) => !e.status).length;
+  // Present/absent/leave/no-record are counted per DISTINCT WORKER — a double
+  // shift produces two rows but must not count as two "present" people.
+  // Late/missing-checkout stay per-shift (row-level), since those are
+  // properties of an individual shift, not the worker's whole day.
+  const workerDayStatus = new Map<string, AttendanceEntry["status"]>();
+  for (const e of entries) {
+    if (e.status === "present") {
+      workerDayStatus.set(e.workerId, "present");
+    } else if (!workerDayStatus.has(e.workerId)) {
+      workerDayStatus.set(e.workerId, e.status);
+    }
+  }
+  const dayStatuses = Array.from(workerDayStatus.values());
+
+  const total = workerDayStatus.size;
+  const present = dayStatuses.filter((s) => s === "present").length;
+  const absent = dayStatuses.filter((s) => s === "absent").length;
+  const onLeave = dayStatuses.filter((s) => s === "leave").length;
+  const noRecord = dayStatuses.filter((s) => !s).length;
   const late = entries.filter((e) => e.isLate).length;
   const missingCheckout = entries.filter((e) => e.checkoutMissing).length;
 
@@ -574,7 +598,7 @@ export function AttendanceClient({
                 ) : (
                   entries.map((entry) => (
                     <TableRow
-                      key={entry.workerId}
+                      key={entry.recordId ?? entry.workerId}
                       className={
                         entry.checkoutMissing
                           ? "bg-orange-50/50"
@@ -590,6 +614,14 @@ export function AttendanceClient({
                       </TableCell>
                       <TableCell className="font-medium">
                         {entry.fullName}
+                        {entry.shiftSequence && entry.shiftSequence > 1 && (
+                          <Badge
+                            variant="secondary"
+                            className="ml-1.5 bg-slate-100 text-slate-600 align-middle"
+                          >
+                            Shift {entry.shiftSequence}
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
                         {entry.deptName}
