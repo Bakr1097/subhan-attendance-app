@@ -244,4 +244,21 @@ Builds the endpoint that will receive punches from a ZKTeco MB460 terminal. The 
 
 ---
 
-## All 16 steps complete. App is in production. Part 2 (LAN bridge program) is a separate future step.
+### Step 16 (Part 2) — ZKTeco MB460 LAN Bridge Program ✓
+
+Self-contained Node.js program in **`zkteco-bridge/`**, separate from the Next.js app (no app files touched). Runs on a PC on the same LAN as the physical terminal; not deployed to Vercel.
+
+- **What it does**: connects to the MB460 over TCP, downloads attendance logs via `node-zklib`, filters out anything already sent (tracked in a local `last-sync.json` checkpoint file), sorts the rest chronologically, and POSTs the batch to `/api/biometric/punch` with the `x-bridge-secret` header
+- **Runs once and exits** — no polling loop in the script itself; Windows Task Scheduler is what re-runs it every 5 minutes (setup steps are in `zkteco-bridge/README.md`)
+- **Config values** (`zkteco-bridge/config.js`, all hardcoded per the business's fixed setup): device IP `192.168.1.201`, port `4370`, endpoint `https://subhan-attendance-app.vercel.app/api/biometric/punch`, and the same `BRIDGE_API_SECRET` value already set in `.env.local`/Vercel
+- **`test-connection.js`**: standalone read-only diagnostic — connects and prints device name, serial number, firmware, enrolled-user count, and attendance-record count; used to confirm LAN reachability before relying on the real sync
+- **Chronological ordering matters**: the app decides check-in vs. check-out from what's already stored, so a batch with a checkout appearing before its check-in (out of order) would be misread; `index.js` sorts all new punches by `recordTime` ascending before sending
+- **Failure handling**: device unreachable, log-read failure, or a non-OK API response are all caught, logged with a timestamp, and exit with `process.exitCode = 1` — never an unhandled crash/stack trace. `last-sync.json` is only advanced after a confirmed-successful send, so a failed run is safely retried in full on the next scheduled run
+- **Windows Task Scheduler requirement**: must be configured on the terminal PC to run `node index.js` (working directory = the `zkteco-bridge` folder) every 5 minutes, "run whether user is logged on or not." Exact click-by-click steps are in the README for a non-technical setup
+- **Verified against the real device** during this build: successfully connected to the actual MB460 at `192.168.1.201:4370` from this network, confirmed `getAttendances()` returns `{ deviceUserId: string, recordTime: Date }` exactly as expected, and confirmed `getInfo()` reliably returns enrolled-user/log counts. The raw device-name/serial/firmware reads (`test-connection.js` only, via the protocol's `CMD_OPTIONS_RRQ` opcode — not wrapped by `node-zklib`'s public API) occasionally show a stray trailing character due to a device firmware quirk (uninitialized padding byte after the field's NUL terminator); harmless and informational-only, not used by the real sync path
+- Did **not** run a real end-to-end sync against the production API/DB as part of this build (that would have created live attendance data) — the user should run `node index.js` once manually to verify before relying on the scheduled task
+- Deps: `node-zklib@^1.3.0` only; plain JavaScript, no TypeScript, no build step
+
+---
+
+## All 16 steps complete (Part 1 + Part 2). App is in production; the biometric bridge is ready to install on the terminal PC.

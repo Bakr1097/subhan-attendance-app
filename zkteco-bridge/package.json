@@ -1,0 +1,17 @@
+{
+  "name": "zkteco-bridge",
+  "version": "1.0.0",
+  "description": "Pulls attendance punches from a ZKTeco MB460 over LAN and forwards them to the attendance app.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test-connection": "node test-connection.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "node-zklib": "^1.3.0"
+  }
+}
