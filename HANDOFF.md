@@ -367,4 +367,19 @@ Self-contained Node.js program in **`zkteco-bridge/`**, separate from the Next.j
 
 ---
 
-## All 19 steps complete. App is in production; the attendance/payroll pipeline now correctly handles double shifts end-to-end, and a latent stale-data caching bug was found and fixed along the way.
+### Step 20 — ZKTeco Bridge: Chunked Sync (Backfill Timeout Fix) ✓
+
+**The bug:** `zkteco-bridge/index.js` sent every pending punch in one single POST to `/api/biometric/punch`. On a first-run backfill with a large backlog (tested with 437 real punches), that one request took long enough that it hit Vercel's serverless function time limit and the fetch failed with `fetch failed` after ~5 minutes — and since `last-sync.json` is only written after a confirmed successful send, the **entire run failed with nothing saved**, so the same 437 punches would be retried (and time out again) on every subsequent scheduled run.
+
+**The fix — same file, `main()` only, nothing else touched:**
+- `newRecords` is now split into chunks of 50 and sent as sequential POSTs (same endpoint/headers as before) instead of one big request.
+- Per-chunk `processed`/`checkedIn`/`checkedOut`/`duplicates`/`alreadyComplete` counts are accumulated and `unmatched` arrays concatenated, so the final log line is still one combined summary across the whole run — output shape for a normal small run (0–5 punches, 1 chunk) is unchanged.
+- If a chunk fails (network error or non-OK HTTP response), it's logged clearly with which chunk number failed, and the loop **continues** to the next chunk rather than aborting the whole run.
+- The `last-sync.json` checkpoint only advances through the last **contiguous** run of successful chunks starting from chunk 1 — once any chunk fails, the checkpoint stops advancing even if later chunks go on to succeed. This is deliberate: if a later chunk's timestamp were saved as the checkpoint, the earlier failed chunk's punches would fall before it and never be picked up as "new" again on the next run. Any chunks sent successfully after the failure point are still forwarded to the app (so the data isn't lost/delayed there), but the on-device sync checkpoint doesn't move past the gap — the next scheduled run will simply resend everything from the failed chunk onward, which the app's existing duplicate-detection safely absorbs for anything already processed.
+- If every chunk fails, behavior is unchanged from before: `last-sync.json` is left untouched and the process exits with code 1.
+- `process.exitCode` is now also set to 1 when *some but not all* chunks fail (previously only all-or-nothing runs set an exit code), so a partial failure is visible to anyone/anything monitoring the scheduled task's exit status, even though the run is allowed to keep going and save what it could.
+- Not deployed/run against the real device as part of this fix (would touch production data) — logic verified with `node -c` (syntax) and by reasoning through the chunk-failure/checkpoint-advance cases; recommend the user run `node index.js` once for real (ideally next time there's a backlog) to confirm the timeout is actually gone.
+
+---
+
+## All 20 steps complete. App is in production; the attendance/payroll pipeline correctly handles double shifts end-to-end, a latent stale-data caching bug was found and fixed, and the biometric bridge no longer fails wholesale on large first-run backfills.

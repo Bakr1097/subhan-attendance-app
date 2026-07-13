@@ -95,51 +95,118 @@ async function main() {
     timestamp: new Date(r.recordTime).toISOString(),
   }));
 
-  log(`Sending ${punches.length} new punch(es) to the app...`);
-
-  let response;
-  try {
-    response = await fetch(config.APP_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-bridge-secret": config.BRIDGE_SECRET,
-      },
-      body: JSON.stringify(punches),
-    });
-  } catch (err) {
-    log("ERROR: could not reach the app endpoint —", err.message || err);
-    process.exitCode = 1;
-    return;
+  // Large first-run backfills can contain hundreds of records — sending them
+  // all in one POST can take longer than the app's serverless function
+  // allows and the whole request times out with nothing saved. Sending in
+  // small sequential chunks keeps each request fast and lets us keep
+  // whatever succeeded even if a later chunk fails.
+  const CHUNK_SIZE = 50;
+  const chunks = [];
+  for (let i = 0; i < newRecords.length; i += CHUNK_SIZE) {
+    chunks.push(newRecords.slice(i, i + CHUNK_SIZE));
   }
 
-  let body = null;
-  try {
-    body = await response.json();
-  } catch {
-    // non-JSON body, fall through to the !response.ok branch below
-  }
-
-  if (!response.ok) {
-    log(`ERROR: app responded with HTTP ${response.status}:`, body ?? "(no JSON body)");
-    process.exitCode = 1;
-    return;
-  }
-
-  log("Sync summary:", {
-    processed: body.processed,
-    checkedIn: body.checkedIn,
-    checkedOut: body.checkedOut,
-    duplicates: body.duplicates,
-    alreadyComplete: body.alreadyComplete,
-    unmatched: body.unmatched,
-  });
-
-  // Advance the checkpoint to the newest punch we just sent successfully.
-  const latest = newRecords.reduce(
-    (max, r) => (new Date(r.recordTime) > max ? new Date(r.recordTime) : max),
-    lastSyncedAt || new Date(0)
+  log(
+    `Sending ${punches.length} new punch(es) to the app in ${chunks.length} chunk(s) of up to ${CHUNK_SIZE}...`
   );
+
+  const combined = {
+    processed: 0,
+    checkedIn: 0,
+    checkedOut: 0,
+    duplicates: 0,
+    alreadyComplete: 0,
+    unmatched: [],
+  };
+
+  let latest = lastSyncedAt || new Date(0);
+  let anyChunkSucceeded = false;
+  let anyChunkFailed = false;
+  // Once a chunk fails, stop advancing the checkpoint even if later chunks
+  // succeed — otherwise the failed chunk's records would fall before the
+  // saved checkpoint and never be retried.
+  let stopAdvancingCheckpoint = false;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkRecords = chunks[i];
+    const chunkPunches = chunkRecords.map((r) => ({
+      deviceUserId: String(r.deviceUserId),
+      timestamp: new Date(r.recordTime).toISOString(),
+    }));
+
+    let response;
+    try {
+      response = await fetch(config.APP_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-bridge-secret": config.BRIDGE_SECRET,
+        },
+        body: JSON.stringify(chunkPunches),
+      });
+    } catch (err) {
+      log(
+        `ERROR: chunk ${i + 1}/${chunks.length} failed — could not reach the app endpoint —`,
+        err.message || err
+      );
+      anyChunkFailed = true;
+      stopAdvancingCheckpoint = true;
+      continue;
+    }
+
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      // non-JSON body, fall through to the !response.ok branch below
+    }
+
+    if (!response.ok) {
+      log(
+        `ERROR: chunk ${i + 1}/${chunks.length} failed — app responded with HTTP ${response.status}:`,
+        body ?? "(no JSON body)"
+      );
+      anyChunkFailed = true;
+      stopAdvancingCheckpoint = true;
+      continue;
+    }
+
+    anyChunkSucceeded = true;
+    combined.processed += body?.processed || 0;
+    combined.checkedIn += body?.checkedIn || 0;
+    combined.checkedOut += body?.checkedOut || 0;
+    combined.duplicates += body?.duplicates || 0;
+    combined.alreadyComplete += body?.alreadyComplete || 0;
+    if (Array.isArray(body?.unmatched)) combined.unmatched.push(...body.unmatched);
+
+    log(`Chunk ${i + 1}/${chunks.length} sent OK (${chunkPunches.length} punch(es)).`);
+
+    if (!stopAdvancingCheckpoint) {
+      latest = chunkRecords.reduce(
+        (max, r) => (new Date(r.recordTime) > max ? new Date(r.recordTime) : max),
+        latest
+      );
+    }
+  }
+
+  if (!anyChunkSucceeded) {
+    log("ERROR: all chunks failed to send. No punches were confirmed; last-sync.json left unchanged.");
+    process.exitCode = 1;
+    return;
+  }
+
+  log("Sync summary:", combined);
+
+  if (anyChunkFailed) {
+    process.exitCode = 1;
+    log(
+      `WARNING: one or more chunks failed. Checkpoint advanced only through the last contiguous ` +
+        `successful chunk -> ${latest.toISOString()}. Records at/after the failed chunk will be ` +
+        `retried on the next scheduled run.`
+    );
+  }
+
+  // Advance the checkpoint to the newest punch we confirmed successfully.
   saveLastSyncedAt(latest);
   log(`last-sync.json updated -> ${latest.toISOString()}`);
 }
