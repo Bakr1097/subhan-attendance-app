@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Table,
@@ -424,6 +424,40 @@ export function AttendanceClient({
   const today = new Date().toISOString().slice(0, 10);
   const isToday = workDate === today;
 
+  // ── Client-side search & filters (no server round-trip) ────────────────────
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [deptFilter, setDeptFilter] = useState("");
+
+  const uniqueDepts = useMemo(
+    () => Array.from(new Set(entries.map((e) => e.deptName))).sort(),
+    [entries]
+  );
+
+  const filtersActive = search.trim() !== "" || statusFilter !== "" || deptFilter !== "";
+
+  const filteredEntries = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return entries.filter((e) => {
+      if (q) {
+        const matchName = e.fullName.toLowerCase().includes(q);
+        const matchCode = e.employeeCode.toLowerCase().includes(q);
+        if (!matchName && !matchCode) return false;
+      }
+      if (statusFilter === "late") {
+        if (!e.isLate) return false;
+      } else if (statusFilter === "missing_checkout") {
+        if (!e.checkoutMissing) return false;
+      } else if (statusFilter === "no_record") {
+        if (e.status !== null) return false;
+      } else if (statusFilter) {
+        if (e.status !== statusFilter) return false;
+      }
+      if (deptFilter && e.deptName !== deptFilter) return false;
+      return true;
+    });
+  }, [entries, search, statusFilter, deptFilter]);
+
   function go(date: string, tid?: string) {
     const t = tid ?? terminalId;
     router.push(`/dashboard/attendance?date=${date}&terminal=${t}`);
@@ -569,6 +603,50 @@ export function AttendanceClient({
             )}
           </div>
 
+          {/* Search & filters */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <input
+              type="text"
+              placeholder="Search by name or code…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="border rounded-md px-3 py-1.5 text-sm bg-white outline-none focus:ring-1 focus:ring-primary w-64"
+            />
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="border rounded-md px-2 py-1.5 text-sm bg-white outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="">All statuses</option>
+              <option value="present">Present</option>
+              <option value="absent">Absent</option>
+              <option value="leave">Leave</option>
+              <option value="no_record">No record</option>
+              <option value="late">Late</option>
+              <option value="missing_checkout">Missing checkout</option>
+            </select>
+
+            <select
+              value={deptFilter}
+              onChange={(e) => setDeptFilter(e.target.value)}
+              className="border rounded-md px-2 py-1.5 text-sm bg-white outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="">All departments</option>
+              {uniqueDepts.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+
+            {filtersActive && (
+              <span className="text-sm text-muted-foreground">
+                Showing {filteredEntries.length} of {entries.length} workers
+              </span>
+            )}
+          </div>
+
           {/* Table */}
           <div className="border rounded-lg bg-white overflow-hidden">
             <Table>
@@ -595,8 +673,17 @@ export function AttendanceClient({
                       No active workers found for this terminal.
                     </TableCell>
                   </TableRow>
+                ) : filteredEntries.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={9}
+                      className="text-center text-muted-foreground py-10"
+                    >
+                      No workers match your filters.
+                    </TableCell>
+                  </TableRow>
                 ) : (
-                  entries.map((entry) => (
+                  filteredEntries.map((entry) => (
                     <TableRow
                       key={entry.recordId ?? entry.workerId}
                       className={

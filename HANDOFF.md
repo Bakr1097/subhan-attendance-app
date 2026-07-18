@@ -382,4 +382,21 @@ Self-contained Node.js program in **`zkteco-bridge/`**, separate from the Next.j
 
 ---
 
-## All 20 steps complete. App is in production; the attendance/payroll pipeline correctly handles double shifts end-to-end, a latent stale-data caching bug was found and fixed, and the biometric bridge no longer fails wholesale on large first-run backfills.
+### Step 21 — Attendance Page: Client-Side Search & Filters ✓
+
+`/dashboard/attendance` now has three instant client-side controls above the table, same pattern as the Audit Log page's filters (Step 12) — no server round-trip, all filtering happens in React state.
+
+- **Search box** — matches worker name OR employee code, case-insensitive, partial match
+- **Status filter dropdown** — All / Present / Absent / Leave / No record / Late / Missing checkout. The last two ("Late", "Missing checkout") check the row-level `isLate`/`checkoutMissing` flags rather than the `status` field, since a present row can independently be late and/or missing checkout
+- **Department filter dropdown** — options built from `Array.from(new Set(entries.map(e => e.deptName)))` for the currently loaded terminal/date, so it only ever shows departments actually present
+- All three combine with AND logic via a single `useMemo`-derived `filteredEntries` array
+- "Showing X of Y workers" count appears next to the filters, only when at least one filter is active (matches the Audit Log page's count-display behavior)
+- **Summary bar unchanged**: still computed from the full unfiltered `entries` array (per-distinct-worker present/absent/leave/no-record counts, per-row late/missing-checkout counts) — filters only affect which table rows render, never the totals
+- Multi-shift rows (`shiftSequence > 1`) are unaffected by the filter refactor — a name/code search matches every row for that worker since each shift is its own entry in `entries`; status/department filters still apply per-row as before
+- No server action changes — `correctAttendance`/`markAbsent`/`markLeave` and supervisor scoping (already enforced server-side before this step) are untouched; row actions operate on `filteredEntries` items exactly as they did on `entries` items
+
+- Build: 23 routes, compiles cleanly (no new routes added — this is a client component change only)
+
+---
+
+## All 21 steps complete. App is in production; the attendance/payroll pipeline correctly handles double shifts end-to-end, a latent stale-data caching bug was found and fixed, the biometric bridge no longer fails wholesale on large first-run backfills, and the Attendance page now supports instant client-side search/status/department filtering for scanning large worker lists.
