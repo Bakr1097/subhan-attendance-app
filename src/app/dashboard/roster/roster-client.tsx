@@ -77,7 +77,7 @@ export function DateNavigator({
   const isToday = date === today;
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 flex-wrap">
       <Button
         variant="outline"
         size="icon"
@@ -118,26 +118,22 @@ export function DateNavigator({
         </Badge>
       )}
 
-      <span className="text-sm text-muted-foreground ml-1">
+      <span className="text-sm text-muted-foreground ml-1 hidden sm:inline">
         {formatDateDisplay(date)}
       </span>
     </div>
   );
 }
 
-// ─── Single roster row ────────────────────────────────────────────────────────
+// ─── Shared shift-override state (used by both the desktop row and the ─────
+// mobile card — each mounted instance gets its own independent state, which
+// is fine since only one of the two is ever visible on a given device: the
+// md breakpoint (768px) is well above any phone's width in either
+// orientation, so there's no real scenario where both are live at once.
 
 const NO_OVERRIDE = "__default__";
 
-function RosterRow({
-  entry,
-  shifts,
-  workDate,
-}: {
-  entry: RosterEntry;
-  shifts: ShiftOption[];
-  workDate: string;
-}) {
+function useShiftOverride(entry: RosterEntry, workDate: string) {
   const { toast } = useToast();
   const [overrideId, setOverrideId] = useState(entry.overrideShiftId);
   const [pending, startTransition] = useTransition();
@@ -173,9 +169,22 @@ function RosterRow({
     });
   }
 
-  const effectiveName = isOverridden
-    ? shifts.find((s) => s.id === overrideId)?.name ?? "Unknown shift"
-    : entry.defaultShiftName ?? "No shift";
+  return { overrideId, isOverridden, selectValue, pending, defaultLabel, handleChange };
+}
+
+// ─── Single roster row (desktop, md and up) ──────────────────────────────────
+
+function RosterRow({
+  entry,
+  shifts,
+  workDate,
+}: {
+  entry: RosterEntry;
+  shifts: ShiftOption[];
+  workDate: string;
+}) {
+  const { isOverridden, selectValue, pending, defaultLabel, handleChange } =
+    useShiftOverride(entry, workDate);
 
   return (
     <TableRow className={isOverridden ? "bg-amber-50/40" : undefined}>
@@ -223,6 +232,66 @@ function RosterRow({
   );
 }
 
+// ─── Single roster card (mobile, below md) ───────────────────────────────────
+
+function RosterCard({
+  entry,
+  shifts,
+  workDate,
+}: {
+  entry: RosterEntry;
+  shifts: ShiftOption[];
+  workDate: string;
+}) {
+  const { isOverridden, selectValue, pending, defaultLabel, handleChange } =
+    useShiftOverride(entry, workDate);
+
+  return (
+    <div
+      className={`border rounded-lg p-4 space-y-3 ${
+        isOverridden ? "bg-amber-50/40" : "bg-white"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-medium">{entry.fullName}</div>
+          <div className="text-xs text-muted-foreground font-mono mt-0.5">
+            {entry.employeeCode} · {entry.deptName}
+          </div>
+        </div>
+        {isOverridden ? (
+          <Badge
+            variant="secondary"
+            className="bg-amber-100 text-amber-800 hover:bg-amber-100 shrink-0"
+          >
+            Override
+          </Badge>
+        ) : (
+          <Badge variant="secondary" className="text-muted-foreground shrink-0">
+            Default
+          </Badge>
+        )}
+      </div>
+
+      <Select value={selectValue} onValueChange={handleChange} disabled={pending}>
+        <SelectTrigger className="w-full text-sm">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NO_OVERRIDE} className="text-muted-foreground">
+            {defaultLabel}
+          </SelectItem>
+          {shifts.map((s) => (
+            <SelectItem key={s.id} value={s.id}>
+              {s.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 // ─── Roster table ─────────────────────────────────────────────────────────────
 
 export function RosterTable({
@@ -237,46 +306,74 @@ export function RosterTable({
   const overrideCount = entries.filter((e) => e.overrideShiftId !== null).length;
 
   return (
-    <div className="border rounded-lg bg-white overflow-hidden">
-      {overrideCount > 0 && (
-        <div className="px-4 py-2 bg-amber-50 border-b text-sm text-amber-700 flex items-center gap-1.5">
-          <span className="font-semibold">{overrideCount}</span>
-          {overrideCount === 1 ? "worker has" : "workers have"} a shift
-          override for this date.
-        </div>
-      )}
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-28">Code</TableHead>
-            <TableHead>Name</TableHead>
-            <TableHead>Department</TableHead>
-            <TableHead>Shift for this day</TableHead>
-            <TableHead className="w-24">Status</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {entries.length === 0 ? (
+    <div className="space-y-3">
+      {/* Table — desktop (md and up), unchanged */}
+      <div className="hidden md:block border rounded-lg bg-white overflow-hidden">
+        {overrideCount > 0 && (
+          <div className="px-4 py-2 bg-amber-50 border-b text-sm text-amber-700 flex items-center gap-1.5">
+            <span className="font-semibold">{overrideCount}</span>
+            {overrideCount === 1 ? "worker has" : "workers have"} a shift
+            override for this date.
+          </div>
+        )}
+        <Table>
+          <TableHeader>
             <TableRow>
-              <TableCell
-                colSpan={5}
-                className="text-center text-muted-foreground py-10"
-              >
-                No active workers found for this terminal.
-              </TableCell>
+              <TableHead className="w-28">Code</TableHead>
+              <TableHead>Name</TableHead>
+              <TableHead>Department</TableHead>
+              <TableHead>Shift for this day</TableHead>
+              <TableHead className="w-24">Status</TableHead>
             </TableRow>
-          ) : (
-            entries.map((entry) => (
-              <RosterRow
-                key={`${entry.workerId}-${workDate}`}
-                entry={entry}
-                shifts={shifts}
-                workDate={workDate}
-              />
-            ))
-          )}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {entries.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={5}
+                  className="text-center text-muted-foreground py-10"
+                >
+                  No active workers found for this terminal.
+                </TableCell>
+              </TableRow>
+            ) : (
+              entries.map((entry) => (
+                <RosterRow
+                  key={`${entry.workerId}-${workDate}`}
+                  entry={entry}
+                  shifts={shifts}
+                  workDate={workDate}
+                />
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {/* Cards — mobile (below md), same data/controls as the desktop table */}
+      <div className="md:hidden space-y-3">
+        {overrideCount > 0 && (
+          <div className="px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 flex items-center gap-1.5">
+            <span className="font-semibold">{overrideCount}</span>
+            {overrideCount === 1 ? "worker has" : "workers have"} a shift
+            override for this date.
+          </div>
+        )}
+        {entries.length === 0 ? (
+          <div className="border rounded-lg bg-white p-8 text-center text-muted-foreground text-sm">
+            No active workers found for this terminal.
+          </div>
+        ) : (
+          entries.map((entry) => (
+            <RosterCard
+              key={`${entry.workerId}-${workDate}-card`}
+              entry={entry}
+              shifts={shifts}
+              workDate={workDate}
+            />
+          ))
+        )}
+      </div>
     </div>
   );
 }

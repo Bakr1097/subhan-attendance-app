@@ -193,8 +193,8 @@ export function DetailClient({
         )}
       </div>
 
-      {/* Day-by-day table */}
-      <div className="border rounded-lg bg-white overflow-hidden">
+      {/* Day-by-day table — desktop (md and up), unchanged */}
+      <div className="hidden md:block border rounded-lg bg-white overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>
@@ -264,6 +264,69 @@ export function DetailClient({
             })}
           </TableBody>
         </Table>
+      </div>
+
+      {/* Cards — mobile (below md), same data as the desktop table */}
+      <div className="md:hidden space-y-3">
+        {days.map((day) => {
+          const isFuture = day.date > today;
+          const isToday = day.date === today;
+          const notes = buildNotes(day);
+
+          return (
+            <div
+              key={`${day.date}-${day.shiftSequence ?? 0}`}
+              className={`border rounded-lg p-4 space-y-2 ${
+                isFuture
+                  ? "opacity-40 bg-white"
+                  : day.checkoutMissing
+                  ? "bg-orange-50/50"
+                  : day.status === "absent"
+                  ? "bg-red-50/30"
+                  : day.status === "leave"
+                  ? "bg-blue-50/30"
+                  : "bg-white"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className={`text-sm font-mono ${isToday ? "font-bold text-primary" : ""}`}>
+                    {formatDayLabel(day.date)}
+                  </span>
+                  {day.shiftSequence && day.shiftSequence > 1 && (
+                    <Badge variant="secondary" className="bg-slate-100 text-slate-600 text-[10px]">
+                      Shift {day.shiftSequence}
+                    </Badge>
+                  )}
+                </div>
+                <StatusBadge status={day.status} />
+              </div>
+
+              {day.shiftName && (
+                <div className="text-xs text-muted-foreground">{day.shiftName}</div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-muted-foreground">Check-in</div>
+                  <div>{fmtTime(day.checkInAt)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Check-out</div>
+                  <div>{fmtTime(day.checkOutAt)}</div>
+                </div>
+              </div>
+
+              <div className="text-xs text-muted-foreground">
+                Worked: {fmtWorked(day.workedMinutes)}
+              </div>
+
+              {notes && (
+                <div className="text-xs text-muted-foreground">{notes}</div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

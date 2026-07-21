@@ -213,7 +213,7 @@ export function PayrollClient({
         </div>
 
         {/* Date navigator */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             variant="outline"
             size="icon"
@@ -317,7 +317,7 @@ export function PayrollClient({
           </div>
 
           {/* Total payable, big and clear */}
-          <div className="border rounded-lg bg-white p-5 flex items-center justify-between">
+          <div className="border rounded-lg bg-white p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
             <span className="text-sm font-medium text-muted-foreground">
               Total Payable
             </span>
@@ -326,8 +326,8 @@ export function PayrollClient({
             </span>
           </div>
 
-          {/* Table */}
-          <div className="border rounded-lg bg-white overflow-hidden">
+          {/* Table — desktop (md and up), unchanged */}
+          <div className="hidden md:block border rounded-lg bg-white overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -392,6 +392,63 @@ export function PayrollClient({
                 )}
               </TableBody>
             </Table>
+          </div>
+
+          {/* Cards — mobile (below md), same data/actions as the desktop table */}
+          <div className="md:hidden space-y-3">
+            {entries.length === 0 ? (
+              <div className="border rounded-lg bg-white p-8 text-center text-muted-foreground text-sm">
+                No daily-pay workers found for this terminal.
+              </div>
+            ) : (
+              entries.map((entry) => (
+                <div
+                  key={entry.workerId}
+                  className={`border rounded-lg p-4 space-y-3 ${
+                    entry.checkoutMissing
+                      ? "bg-orange-50/50"
+                      : entry.status === "absent"
+                      ? "bg-red-50/30"
+                      : "bg-white"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-medium">{entry.fullName}</div>
+                      <div className="text-xs text-muted-foreground font-mono mt-0.5">
+                        {entry.employeeCode} · {entry.deptName}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-xs text-muted-foreground">Daily Rate</div>
+                      <div className="text-sm text-muted-foreground">
+                        {fmtPKR(entry.dailyRate)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm">
+                      <span className="text-muted-foreground">Shifts:</span>{" "}
+                      <span className="font-semibold">{entry.shiftsWorked}</span>
+                    </div>
+                    <StatusSelect entry={entry} closingDate={closingDate} />
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2 border-t">
+                    <span className="text-sm text-muted-foreground">Amount</span>
+                    <span className="font-semibold">{fmtPKR(entry.amount)}</span>
+                  </div>
+
+                  {entry.checkoutMissing && (
+                    <div className="flex items-center gap-1 text-xs text-orange-600">
+                      <AlertTriangle className="w-3 h-3 shrink-0" />
+                      missing checkout
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </>
       )}

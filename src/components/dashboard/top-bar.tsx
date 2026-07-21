@@ -1,7 +1,7 @@
 "use client";
 
 import { signOut } from "next-auth/react";
-import { LogOut, User } from "lucide-react";
+import { LogOut, Menu, User } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,11 +15,22 @@ import { Button } from "@/components/ui/button";
 interface TopBarProps {
   userName: string;
   userRole: "admin" | "supervisor";
+  onMenuClick?: () => void;
 }
 
-export function TopBar({ userName, userRole }: TopBarProps) {
+export function TopBar({ userName, userRole, onMenuClick }: TopBarProps) {
   return (
-    <header className="h-14 border-b bg-white flex items-center justify-end px-6 shrink-0">
+    <header className="h-14 border-b bg-white flex items-center justify-between md:justify-end px-4 md:px-6 shrink-0">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="md:hidden"
+        onClick={onMenuClick}
+        aria-label="Open menu"
+      >
+        <Menu className="w-5 h-5" />
+      </Button>
+
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="sm" className="gap-2">

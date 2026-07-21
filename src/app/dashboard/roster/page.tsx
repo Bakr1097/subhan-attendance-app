@@ -188,7 +188,7 @@ export default async function RosterPage({
           </div>
 
           {/* Summary bar */}
-          <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <div className="flex items-center gap-3 flex-wrap text-sm text-muted-foreground">
             <span>
               <span className="font-semibold text-foreground">
                 {entries.length}

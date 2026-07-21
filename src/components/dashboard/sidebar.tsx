@@ -2,36 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  Building2,
-  Layers,
-  Clock,
-  Users,
-  UserCog,
-  CalendarDays,
-  ClipboardList,
-  BarChart3,
-  Banknote,
-  ScrollText,
-  Settings,
-} from "lucide-react";
 import { cn } from "@/lib/utils";
-
-const NAV_ITEMS = [
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, adminOnly: false },
-  { label: "Terminals", href: "/dashboard/terminals", icon: Building2, adminOnly: true },
-  { label: "Departments", href: "/dashboard/departments", icon: Layers, adminOnly: true },
-  { label: "Shifts", href: "/dashboard/shifts", icon: Clock, adminOnly: true },
-  { label: "Workers", href: "/dashboard/workers", icon: Users, adminOnly: false },
-  { label: "Roster", href: "/dashboard/roster", icon: CalendarDays, adminOnly: false },
-  { label: "Attendance", href: "/dashboard/attendance", icon: ClipboardList, adminOnly: false },
-  { label: "Reports", href: "/dashboard/reports", icon: BarChart3, adminOnly: false },
-  { label: "Payroll", href: "/dashboard/payroll", icon: Banknote, adminOnly: false },
-  { label: "Audit Log", href: "/dashboard/audit", icon: ScrollText, adminOnly: true },
-  { label: "Users", href: "/dashboard/users", icon: UserCog, adminOnly: true },
-  { label: "Settings", href: "/dashboard/settings", icon: Settings, adminOnly: true },
-];
+import { NAV_ITEMS } from "./nav-items";
 
 interface SidebarProps {
   role: "admin" | "supervisor";
@@ -43,7 +15,7 @@ export function Sidebar({ role }: SidebarProps) {
   const items = NAV_ITEMS.filter((item) => !item.adminOnly || role === "admin");
 
   return (
-    <aside className="flex flex-col w-60 min-h-screen bg-slate-900 text-slate-100 shrink-0">
+    <aside className="hidden md:flex flex-col w-60 min-h-screen bg-slate-900 text-slate-100 shrink-0">
       <div className="px-6 py-5 border-b border-slate-700">
         <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
           Subhan Terminal

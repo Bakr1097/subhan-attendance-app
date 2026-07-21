@@ -223,7 +223,7 @@ export function ReportsClient({
         </div>
 
         {/* Month navigator */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             variant="outline"
             size="icon"
@@ -321,8 +321,8 @@ export function ReportsClient({
             </Button>
           </div>
 
-          {/* Summary table */}
-          <div className="border rounded-lg bg-white overflow-hidden">
+          {/* Summary table — desktop (md and up), unchanged */}
+          <div className="hidden md:block border rounded-lg bg-white overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -464,6 +464,107 @@ export function ReportsClient({
                 )}
               </TableBody>
             </Table>
+          </div>
+
+          {/* Cards — mobile (below md), same data/links as the desktop table */}
+          <div className="md:hidden space-y-3">
+            {summaries.length === 0 ? (
+              <div className="border rounded-lg bg-white p-8 text-center text-muted-foreground text-sm">
+                No workers found for this period.
+              </div>
+            ) : (
+              <>
+                {summaries.map((s) => (
+                  <Link
+                    key={s.workerId}
+                    href={`/dashboard/reports/${s.workerId}?month=${month}&terminal=${terminalId}`}
+                    className="block border rounded-lg bg-white p-4 space-y-3 hover:bg-slate-50"
+                  >
+                    <div>
+                      <div className="font-medium text-primary">{s.fullName}</div>
+                      <div className="text-xs text-muted-foreground font-mono mt-0.5">
+                        {s.employeeCode} · {s.deptName}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-sm">
+                      <div>
+                        <div className="text-xs text-muted-foreground">Present</div>
+                        <div className="font-semibold text-green-700">{s.present}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Absent</div>
+                        <div className={s.absent > 0 ? "font-semibold text-red-600" : "text-muted-foreground"}>
+                          {s.absent}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Leave</div>
+                        <div className={s.leave > 0 ? "font-semibold text-blue-600" : "text-muted-foreground"}>
+                          {s.leave}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">No Record</div>
+                        <div className={s.noRecord > 0 ? "text-amber-600" : "text-muted-foreground"}>
+                          {s.noRecord}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Total Shifts</div>
+                        <div className="text-muted-foreground">{s.totalShifts}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Total Hours</div>
+                        <div className="text-muted-foreground">{fmtHours(s.totalWorkedMinutes)}</div>
+                      </div>
+                    </div>
+                    {s.lateCount > 0 && (
+                      <div className="text-xs font-semibold text-amber-600">
+                        {s.lateCount} late arrival{s.lateCount !== 1 ? "s" : ""}
+                      </div>
+                    )}
+                  </Link>
+                ))}
+
+                {/* Totals card */}
+                <div className="border-2 rounded-lg bg-slate-50 p-4 space-y-3">
+                  <div className="font-semibold text-sm">
+                    {summaries.length} worker{summaries.length !== 1 ? "s" : ""} — Totals
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-sm font-semibold">
+                    <div>
+                      <div className="text-xs text-muted-foreground font-normal">Present</div>
+                      <div className="text-green-700">{totals.present}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground font-normal">Absent</div>
+                      <div className="text-red-600">{totals.absent}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground font-normal">Leave</div>
+                      <div className="text-blue-600">{totals.leave}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground font-normal">No Record</div>
+                      <div className="text-amber-600">{totals.noRecord}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground font-normal">Total Shifts</div>
+                      <div>{totals.totalShifts}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground font-normal">Total Hours</div>
+                      <div>{fmtHours(totals.totalWorkedMinutes)}</div>
+                    </div>
+                  </div>
+                  {totals.lateCount > 0 && (
+                    <div className="text-xs font-semibold text-amber-600">
+                      {totals.lateCount} late arrival{totals.lateCount !== 1 ? "s" : ""}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </>
       )}
