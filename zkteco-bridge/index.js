@@ -34,7 +34,11 @@ function saveLastSyncedAt(date) {
   );
 }
 
-async function main() {
+// Runs the actual sync and returns a plain result object describing what
+// happened — never throws for expected failure modes (device unreachable,
+// app endpoint down, etc.); those are reported in the result instead so the
+// caller can always send a heartbeat, success or failure.
+async function run() {
   const lastSyncedAt = loadLastSyncedAt();
   log(
     lastSyncedAt
@@ -52,12 +56,10 @@ async function main() {
   try {
     await zk.createSocket();
   } catch (err) {
-    log(
-      `ERROR: could not connect to the device at ${config.DEVICE_IP}:${config.DEVICE_PORT} —`,
-      err.message || err
-    );
+    const message = `Could not connect to the device at ${config.DEVICE_IP}:${config.DEVICE_PORT} — ${err.message || err}`;
+    log(`ERROR: ${message}`);
     process.exitCode = 1;
-    return;
+    return { success: false, recordsSynced: 0, message };
   }
 
   log("Connected to device. Downloading attendance logs...");
@@ -66,10 +68,11 @@ async function main() {
   try {
     logs = await zk.getAttendances();
   } catch (err) {
-    log("ERROR: failed to read attendance logs from the device —", err.message || err);
+    const message = `Failed to read attendance logs from the device — ${err.message || err}`;
+    log(`ERROR: ${message}`);
     process.exitCode = 1;
     await safeDisconnect(zk);
-    return;
+    return { success: false, recordsSynced: 0, message };
   }
 
   await safeDisconnect(zk);
@@ -83,7 +86,7 @@ async function main() {
 
   if (newRecords.length === 0) {
     log("No new punches since last sync. Nothing to send.");
-    return;
+    return { success: true, recordsSynced: 0, message: "No new punches since last sync." };
   }
 
   // Sort chronologically — the app decides check-in vs check-out based on
@@ -190,25 +193,34 @@ async function main() {
   }
 
   if (!anyChunkSucceeded) {
-    log("ERROR: all chunks failed to send. No punches were confirmed; last-sync.json left unchanged.");
+    const message = "All chunks failed to send. No punches were confirmed; last-sync.json left unchanged.";
+    log(`ERROR: ${message}`);
     process.exitCode = 1;
-    return;
+    return { success: false, recordsSynced: 0, message };
   }
 
   log("Sync summary:", combined);
 
   if (anyChunkFailed) {
     process.exitCode = 1;
-    log(
-      `WARNING: one or more chunks failed. Checkpoint advanced only through the last contiguous ` +
-        `successful chunk -> ${latest.toISOString()}. Records at/after the failed chunk will be ` +
-        `retried on the next scheduled run.`
-    );
+    saveLastSyncedAt(latest);
+    const message =
+      `Partial failure: ${combined.processed} of ${newRecords.length} punch(es) sent. ` +
+      `Checkpoint advanced only through the last contiguous successful chunk -> ${latest.toISOString()}. ` +
+      `Records at/after the failed chunk will be retried on the next scheduled run.`;
+    log(`WARNING: ${message}`);
+    log(`last-sync.json updated -> ${latest.toISOString()}`);
+    return { success: false, recordsSynced: combined.processed, message };
   }
 
   // Advance the checkpoint to the newest punch we confirmed successfully.
   saveLastSyncedAt(latest);
   log(`last-sync.json updated -> ${latest.toISOString()}`);
+  return {
+    success: true,
+    recordsSynced: combined.processed,
+    message: `Synced ${combined.processed} punch(es) (${combined.checkedIn} check-in, ${combined.checkedOut} check-out, ${combined.duplicates} duplicate).`,
+  };
 }
 
 async function safeDisconnect(zk) {
@@ -217,6 +229,49 @@ async function safeDisconnect(zk) {
   } catch {
     // already disconnected or device dropped the connection — not fatal
   }
+}
+
+// Reports the outcome of a run to the app so an admin can see bridge health
+// without checking this machine directly. Deliberately never lets a
+// heartbeat failure (network blip, app briefly down) affect the process
+// exit code or bubble up — the sync itself already succeeded or failed on
+// its own merits by the time this runs.
+async function sendHeartbeat(result) {
+  try {
+    const response = await fetch(config.HEARTBEAT_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-bridge-secret": config.BRIDGE_SECRET,
+      },
+      body: JSON.stringify({
+        ranAt: new Date().toISOString(),
+        success: result.success,
+        recordsSynced: result.recordsSynced,
+        message: result.message,
+      }),
+    });
+    if (!response.ok) {
+      log(`WARNING: heartbeat POST returned HTTP ${response.status}`);
+    } else {
+      log("Heartbeat sent.");
+    }
+  } catch (err) {
+    log("WARNING: failed to send heartbeat —", err.message || err);
+  }
+}
+
+async function main() {
+  let result;
+  try {
+    result = await run();
+  } catch (err) {
+    const message = `Unexpected failure — ${err.message || err}`;
+    log(`ERROR: ${message}`);
+    process.exitCode = 1;
+    result = { success: false, recordsSynced: 0, message };
+  }
+  await sendHeartbeat(result);
 }
 
 main()

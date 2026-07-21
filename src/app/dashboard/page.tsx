@@ -12,9 +12,25 @@ import {
 import { eq, and, count, inArray } from "drizzle-orm";
 import { Building2, Layers, Users, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { flagMissingCheckout, type ShiftData } from "@/lib/attendance";
-import { getPayrollCutoffTime } from "@/lib/settings";
+import { getPayrollCutoffTime, getBiometricSyncStatus } from "@/lib/settings";
 import { computePayrollForWorkers, STATUS_MULTIPLIER } from "@/lib/payroll-report";
+
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+
+function formatRelativeTime(iso: string): string {
+  const diffMs = Math.max(0, Date.now() - new Date(iso).getTime());
+  const diffMin = Math.round(diffMs / 60000);
+  if (diffMin < 1) return "just now";
+  if (diffMin === 1) return "1 minute ago";
+  if (diffMin < 60) return `${diffMin} minutes ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr === 1) return "1 hour ago";
+  if (diffHr < 24) return `${diffHr} hours ago`;
+  const diffDay = Math.round(diffHr / 24);
+  return diffDay === 1 ? "1 day ago" : `${diffDay} days ago`;
+}
 
 const MONTHS = [
   "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec",
@@ -156,6 +172,14 @@ export default async function DashboardPage() {
     }
   }
 
+  const biometricStatus = isAdmin ? await getBiometricSyncStatus() : null;
+  const minutesSinceSuccess = biometricStatus?.lastSuccessAt
+    ? Date.now() - new Date(biometricStatus.lastSuccessAt).getTime()
+    : null;
+  const bridgeMayBeDown =
+    biometricStatus !== null &&
+    (biometricStatus.lastSuccessAt === null || minutesSinceSuccess! > FIFTEEN_MINUTES_MS);
+
   const now = new Date();
   let presentToday = 0;
   let absentToday = 0;
@@ -257,6 +281,67 @@ export default async function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Biometric bridge health — admin-only */}
+      {isAdmin && (
+        <div>
+          <h2 className="text-sm font-semibold text-muted-foreground mb-2">
+            Biometric Sync
+          </h2>
+          <Card>
+            <CardContent className="pt-6 space-y-3">
+              {!biometricStatus ? (
+                <p className="text-sm text-muted-foreground">
+                  No sync data yet — the bridge hasn&apos;t reported in.
+                </p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                    <span>
+                      <span className="text-muted-foreground">Last run:</span>{" "}
+                      <span className="font-medium">
+                        {formatRelativeTime(biometricStatus.ranAt)}
+                      </span>
+                    </span>
+                    <Badge
+                      variant="secondary"
+                      className={
+                        biometricStatus.success
+                          ? "bg-green-100 text-green-700"
+                          : "bg-red-100 text-red-700"
+                      }
+                    >
+                      {biometricStatus.success ? "Success" : "Failed"}
+                    </Badge>
+                    <span>
+                      <span className="font-semibold">
+                        {biometricStatus.recordsSynced}
+                      </span>{" "}
+                      <span className="text-muted-foreground">
+                        record{biometricStatus.recordsSynced === 1 ? "" : "s"} synced last run
+                      </span>
+                    </span>
+                  </div>
+                  {biometricStatus.message && (
+                    <p className="text-xs text-muted-foreground">
+                      {biometricStatus.message}
+                    </p>
+                  )}
+                  {bridgeMayBeDown && (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      ⚠ Bridge may be down — last successful sync was{" "}
+                      {biometricStatus.lastSuccessAt
+                        ? formatRelativeTime(biometricStatus.lastSuccessAt)
+                        : "never recorded"}
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

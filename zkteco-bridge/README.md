@@ -23,6 +23,8 @@ All the settings this bridge needs are in `config.js`:
 - Device IP: `192.168.1.201`
 - Device Port: `4370`
 - App endpoint: `https://subhan-attendance-app.vercel.app/api/biometric/punch`
+- Heartbeat endpoint: `https://subhan-attendance-app.vercel.app/api/biometric/heartbeat`
+  (reports whether each run succeeded — see "Health monitoring" below)
 - Bridge secret: (already filled in — must match the `BRIDGE_API_SECRET`
   value set in the app's Vercel environment variables)
 
@@ -131,6 +133,25 @@ never have to run it by hand.
 That's it. From now on, punches from the terminal will show up in the
 attendance app automatically within a few minutes of being recorded on the
 device.
+
+---
+
+## Health monitoring
+
+After every run (whether it succeeds or fails), the bridge sends a short
+status report to the app — this powers the **"Biometric Sync"** card on the
+app's Dashboard page (admin login required), so you can check from your
+phone or any browser whether the bridge is actually running on schedule
+without needing to walk over to the terminal PC.
+
+If the app hasn't received a successful report in the last 15 minutes, the
+Dashboard shows a red "Bridge may be down" warning. If you see that warning,
+check on the terminal PC: is it powered on, connected to the network, and is
+the scheduled task still enabled in Task Scheduler?
+
+Sending this report never blocks or fails the actual sync — if the app is
+briefly unreachable when the report is sent, the bridge just logs it and
+moves on; the next run will report again as usual.
 
 ---
 
