@@ -5,9 +5,10 @@ import { usePathname } from "next/navigation";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS } from "./nav-items";
+import type { Role } from "@/lib/roles";
 
 interface MobileNavProps {
-  role: "admin" | "supervisor";
+  role: Role;
   open: boolean;
   onClose: () => void;
 }
@@ -20,7 +21,7 @@ export function MobileNav({ role, open, onClose }: MobileNavProps) {
 
   if (!open) return null;
 
-  const items = NAV_ITEMS.filter((item) => !item.adminOnly || role === "admin");
+  const items = NAV_ITEMS.filter((item) => item.roles.includes(role));
 
   return (
     <div className="md:hidden fixed inset-0 z-50">

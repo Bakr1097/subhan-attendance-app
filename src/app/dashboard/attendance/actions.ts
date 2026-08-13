@@ -5,19 +5,25 @@ import { db } from "@/lib/db";
 import {
   workers,
   attendanceRecords,
-  supervisorScopes,
+  accessScopes,
   auditLog,
 } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { computeAllFlags, computeWorkedMinutes } from "@/lib/attendance";
 import { resolveShiftForWorker } from "@/lib/shift-resolution";
+import { canWrite } from "@/lib/access-control";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Attendance corrections write data — a viewer can read this page (Step 25)
+// but must never be able to call this. Checked explicitly rather than via
+// "role !== admin" so a third read-only role can't fall through to the
+// scoped-write branch below by accident.
 async function requireAccess(workerId: string) {
   const session = await auth();
   if (!session) throw new Error("Unauthorized");
+  if (!canWrite(session.user.role)) throw new Error("Unauthorized");
   if (session.user.role === "admin") return session;
 
   const [worker] = await db
@@ -29,8 +35,8 @@ async function requireAccess(workerId: string) {
 
   const scopes = await db
     .select()
-    .from(supervisorScopes)
-    .where(eq(supervisorScopes.userId, session.user.id));
+    .from(accessScopes)
+    .where(eq(accessScopes.userId, session.user.id));
 
   const allowed = scopes.some(
     (s) =>

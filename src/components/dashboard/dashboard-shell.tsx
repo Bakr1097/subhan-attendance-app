@@ -5,9 +5,10 @@ import { Sidebar } from "./sidebar";
 import { MobileNav } from "./mobile-nav";
 import { TopBar } from "./top-bar";
 import { Toaster } from "@/components/ui/toaster";
+import type { Role } from "@/lib/roles";
 
 interface DashboardShellProps {
-  role: "admin" | "supervisor";
+  role: Role;
   userName: string;
   children: React.ReactNode;
 }

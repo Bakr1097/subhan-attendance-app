@@ -6,7 +6,7 @@ import {
   departments,
   terminals,
   attendanceRecords,
-  supervisorScopes,
+  accessScopes,
 } from "@/db/schema";
 import { eq, and, gte, lte, inArray } from "drizzle-orm";
 import { ReportsClient, type WorkerSummary } from "./reports-client";
@@ -54,8 +54,8 @@ export default async function ReportsPage({
   } else {
     const scopes = await db
       .select()
-      .from(supervisorScopes)
-      .where(eq(supervisorScopes.userId, session.user.id));
+      .from(accessScopes)
+      .where(eq(accessScopes.userId, session.user.id));
     allowedTerminalIds = Array.from(new Set(scopes.map((s) => s.terminalId)));
     const allDepts = await db.select().from(departments);
     const ids: string[] = [];

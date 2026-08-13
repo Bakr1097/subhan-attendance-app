@@ -7,10 +7,11 @@ import {
   shifts,
   terminals,
   shiftAssignments,
-  supervisorScopes,
+  accessScopes,
 } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { Badge } from "@/components/ui/badge";
+import { canWrite } from "@/lib/access-control";
 import {
   DateNavigator,
   RosterTable,
@@ -24,6 +25,9 @@ export default async function RosterPage({
 }) {
   const session = await auth();
   if (!session) redirect("/login");
+  // Roster is a write surface (shift overrides) — a viewer (Step 25) never
+  // reaches it at all.
+  if (!canWrite(session.user.role)) redirect("/dashboard");
 
   // ── Default date = today (UTC) ──────────────────────────────────────────────
   const workDate =
@@ -46,8 +50,8 @@ export default async function RosterPage({
   } else {
     const scopes = await db
       .select()
-      .from(supervisorScopes)
-      .where(eq(supervisorScopes.userId, session.user.id));
+      .from(accessScopes)
+      .where(eq(accessScopes.userId, session.user.id));
 
     allowedTerminalIds = Array.from(new Set(scopes.map((s) => s.terminalId)));
 

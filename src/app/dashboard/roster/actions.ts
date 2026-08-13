@@ -2,14 +2,19 @@
 
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { shiftAssignments, workers, supervisorScopes } from "@/db/schema";
+import { shiftAssignments, workers, accessScopes } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { canWrite } from "@/lib/access-control";
 
+// Roster shift overrides write data — a viewer must never reach this
+// (Step 25), checked explicitly rather than "role !== admin" so a read-only
+// role can't fall through to the scoped-write branch below.
 async function requireRosterAccess(workerId: string) {
   const session = await auth();
   if (!session) throw new Error("Unauthorized");
 
+  if (!canWrite(session.user.role)) throw new Error("Unauthorized");
   if (session.user.role === "admin") return session;
 
   const [worker] = await db
@@ -22,8 +27,8 @@ async function requireRosterAccess(workerId: string) {
 
   const scopes = await db
     .select()
-    .from(supervisorScopes)
-    .where(eq(supervisorScopes.userId, session.user.id));
+    .from(accessScopes)
+    .where(eq(accessScopes.userId, session.user.id));
 
   const allowed = scopes.some(
     (s) =>

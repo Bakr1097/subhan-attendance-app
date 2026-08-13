@@ -4,15 +4,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS } from "./nav-items";
+import type { Role } from "@/lib/roles";
 
 interface SidebarProps {
-  role: "admin" | "supervisor";
+  role: Role;
 }
 
 export function Sidebar({ role }: SidebarProps) {
   const pathname = usePathname();
 
-  const items = NAV_ITEMS.filter((item) => !item.adminOnly || role === "admin");
+  const items = NAV_ITEMS.filter((item) => item.roles.includes(role));
 
   return (
     <aside className="hidden md:flex flex-col w-60 min-h-screen bg-slate-900 text-slate-100 shrink-0">

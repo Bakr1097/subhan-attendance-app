@@ -48,12 +48,16 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
-  role: text("role").$type<"admin" | "supervisor">().notNull(),
+  role: text("role").$type<"admin" | "supervisor" | "viewer">().notNull(),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
-export const supervisorScopes = pgTable("supervisor_scopes", {
+// Renamed from supervisor_scopes (Step 25): a viewer is scoped to a
+// terminal/department exactly the same way a supervisor is, via this same
+// table — "supervisor_scopes" stopped being an accurate name once a second
+// non-admin role started using it.
+export const accessScopes = pgTable("access_scopes", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: uuid("user_id")
     .notNull()

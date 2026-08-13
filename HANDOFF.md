@@ -466,6 +466,62 @@ Managers use the app on their phones daily, but wide tables on several pages ove
 - **Run the migration.** This session's sandbox only has a redacted `DATABASE_URL` (literally the placeholder text `"[SENSITIVE]"` in `.env.local` — not a real credential), so I could not run `npm run db:migrate` against the real database myself. **You (or your deploy process) must run `npm run db:migrate` against production before the first stale-shift punch happens**, or that punch will fail with a database NOT NULL error instead of being handled gracefully. The migration is additive and safe — one column constraint dropped, no data loss, no backfill needed, same low-risk shape as prior schema changes in this project.
 - **Build could not be fully verified here either**, for the same reason: `npm run build` fails while collecting page data for routes that query the database at build time (e.g. `/api/kiosk/workers`, `/api/biometric/heartbeat`) — but I confirmed via `git stash` that this exact failure also happens on unmodified `main` with none of this step's changes applied, so it's a pre-existing sandbox limitation, not a regression from this step. What I *could* verify cleanly: `npx tsc --noEmit` (zero errors, whole project) and the Next.js webpack compile step (succeeds; failure only occurs afterward, during the DB-dependent page-data-collection phase). Recommend running `npm run build` yourself once (or trusting Vercel's own deploy build, which has real credentials) to get a genuine route-count confirmation.
 
+**✓ Follow-up (same day):** once real `DATABASE_URL` credentials were provided, `npm run db:migrate` was run and confirmed applied — `audit_log.actor_user_id` is nullable in production (checked directly via `information_schema.columns`). No data was touched. `npm run build` was also re-run successfully at that point (see Step 25 below, which needed a working build anyway).
+
 ---
 
-## All 24 steps complete. App is in production; the attendance/payroll pipeline correctly handles double shifts end-to-end, a latent stale-data caching bug was found and fixed, the biometric bridge no longer fails wholesale on large first-run backfills, the Attendance page supports instant client-side search/status/department filtering, admins can see biometric bridge health directly on the Dashboard, the 5 most-used pages (plus the dashboard shell/sidebar) are usable in portrait on a phone without rotating to landscape, and a forgotten checkout no longer silently swallows the following day's check-in.
+### Step 25 — View-Only "Viewer" Role (Terminal-Scoped, Read-Only Access) ✓
+
+**Why:** the only non-admin role was supervisor, who can edit attendance, mark absent/leave, and adjust payroll. There was no way to give someone (e.g. a terminal owner who just wants visibility) access without also giving them write power.
+
+**The new role — `viewer`:**
+- Can see, scoped to their assigned terminal/department exactly like a supervisor: `/dashboard` (today strip), `/dashboard/attendance`, `/dashboard/reports` + the report detail pages.
+- Cannot see: Payroll, Workers, Roster, Users, Audit Log, Settings, Terminals, Departments, Shifts — redirected to `/dashboard` (or `/login`) if they try any of those URLs directly, not just hidden from the sidebar.
+- Cannot write anything, anywhere — no Edit/Absent/Leave on Attendance, no roster shift changes, no payroll status changes. Buttons are hidden in the UI **and** every underlying server action independently rejects a viewer, so a hidden button is not the only thing stopping a write.
+- Wage rates and the Dashboard's "Today's Payable" figure were already gated behind `isAdmin` (pre-existing, from before this step) — confirmed a viewer never sees them, no change needed there.
+
+**Renamed `supervisor_scopes` → `access_scopes` (table + `src/db/schema.ts` export):** the table now scopes both supervisor *and* viewer, so "supervisor_scopes" stopped being an accurate name — the prompt explicitly invited this rename rather than building a second, parallel scoping table for viewers. Migration `drizzle/0006_rename_supervisor_scopes.sql`:
+```sql
+ALTER TABLE "supervisor_scopes" RENAME TO "access_scopes";
+ALTER TABLE "access_scopes" RENAME CONSTRAINT "supervisor_scopes_user_id_users_id_fk" TO "access_scopes_user_id_users_id_fk";
+ALTER TABLE "access_scopes" RENAME CONSTRAINT "supervisor_scopes_terminal_id_terminals_id_fk" TO "access_scopes_terminal_id_terminals_id_fk";
+ALTER TABLE "access_scopes" RENAME CONSTRAINT "supervisor_scopes_department_id_departments_id_fk" TO "access_scopes_department_id_departments_id_fk";
+```
+Applied and verified against production: table renamed, all 3 existing scope rows preserved untouched, foreign keys intact under their new names. `drizzle-kit generate`'s interactive rename-detection prompt doesn't work non-interactively in this environment, so the migration SQL and the matching `drizzle/meta/0006_snapshot.json`/`_journal.json` bookkeeping were written by hand (based on the real `0005` snapshot) rather than trusting the auto-diff — re-ran `drizzle-kit generate` afterward and got "No schema changes, nothing to migrate," confirming the hand-authored snapshot exactly matches `schema.ts`. **No migration needed for `users.role` itself** — it's a plain `text` column with no DB-level CHECK constraint (the `"admin" | "supervisor"` union was only ever a TypeScript-level `$type<>()` cast), so adding `"viewer"` as a value required a code change only, not a schema change.
+
+**The critical audit — every place that checked "is this admin, else treat as supervisor":** this was the actual bug risk in the prompt, and it was real. Four server-action files followed the exact pattern *"if admin, allow; otherwise, check supervisor scope and allow"* — which, with a third role now in play, would have silently let a viewer with a valid scope pass the write actions:
+- `src/app/dashboard/attendance/actions.ts` (`requireAccess`, used by `correctAttendance`/`markAbsent`/`markLeave`)
+- `src/app/dashboard/payroll/actions.ts` (`requireAccess`, used by `setDayStatus`)
+- `src/app/dashboard/roster/actions.ts` (`requireRosterAccess`, used by `setShiftOverride`/`clearShiftOverride`)
+- `src/app/dashboard/workers/actions.ts` (`requireWorkerAccess`, used by `createWorker`/`updateWorker`/`setWorkerStatus`)
+
+All four now call a new, single, tested `canWrite(role)` helper (`src/lib/access-control.ts`, `admin` or `supervisor` only) **before** the admin/supervisor branch, so a viewer is rejected outright instead of falling into the scoped-supervisor path. The three page-level entry points for those same write surfaces — `workers/page.tsx`, `roster/page.tsx`, `payroll/page.tsx` — call the identical `canWrite()` to redirect a viewer to `/dashboard` before the page even renders.
+
+Everything else that checked `role !== "admin"` (Terminals, Departments, Shifts, Audit Log, Users, Settings — both pages and actions) was already a **strict allow-list**, not an else-branch, so it was already safe: a viewer hitting `!== "admin"` is `true` just like a supervisor is, and both get redirected/rejected. No changes needed to those files beyond the `supervisorScopes` → `accessScopes` rename where they used the table at all (they didn't — those six are admin-only and never touch scopes).
+
+Attendance is the one page a viewer *can* open that used to have unconditional write buttons: `attendance/page.tsx` now computes `canEdit = canWrite(session.user.role)` and passes it to `AttendanceClient` → `RowActions`, which renders a plain `—` instead of the Edit/Absent/Leave buttons when `canEdit` is false. This is UI-only convenience — `correctAttendance`/`markAbsent`/`markLeave` reject a viewer server-side regardless of what the client sends.
+
+**Sidebar/mobile nav:** `nav-items.ts`'s old binary `adminOnly: boolean` couldn't express three tiers, so each item now carries `roles: Role[]` (exactly who sees the link) and `Sidebar`/`MobileNav` filter with `.includes(role)` instead of `!adminOnly || role === "admin"`.
+
+**Users page (`/dashboard/users`):**
+- "Viewer" added to the role `<Select>` on both Create and Edit dialogs.
+- Terminal/department scope fields now show for `role === "supervisor" || role === "viewer"` (was `=== "supervisor"` only) — via the same shared `roleNeedsScope()` helper the server action uses, imported directly into the client component (it's pure, no `db`/`auth` imports, safe in client bundles).
+- Role badge: viewer gets its own color (teal), distinct from admin (purple) and supervisor (blue).
+- Self-lockout protection generalized: the check was `payload.role !== "admin"` (already role-agnostic, already correctly blocked demoting to viewer) but was extracted into a shared `wouldSelfDemote()` helper and unit-tested directly against the viewer case per the prompt's explicit ask. Last-active-admin protection (`countOtherActiveAdmins`) is unrelated to which non-admin role is chosen and needed no changes.
+- `createUser`/`editUser` audit log writes already record `role: payload.role` verbatim with no filtering, so `create_user`/`edit_user` entries correctly show `"viewer"` in the Audit Log once the `role` type includes it — no logic change needed there, just the type widening.
+
+**Central `Role` type:** `src/lib/roles.ts` — `export type Role = "admin" | "supervisor" | "viewer"` — is now the single source imported everywhere a role was previously hardcoded as the `"admin" | "supervisor"` union (`schema.ts`, `auth.config.ts`, `types/next-auth.d.ts`, all dashboard shell components, `users/actions.ts`, `users-client.tsx`), so there's no longer any copy of the role union that could silently drift and exclude the new role from a type check.
+
+**Tests:** `src/lib/access-control.test.ts` (new, run via `npx tsx src/lib/access-control.test.ts`) — 35 pure assertions, no DB: `canWrite()` for all three roles (covers every write action being denied to viewer and unchanged for supervisor/admin); `roleNeedsScope()` for all three roles; `wouldSelfDemote()` including the specific admin-demotes-self-to-viewer case; and a full sweep of `NAV_ITEMS` asserting, per page, exactly which roles can reach it — which doubles as a test of "viewer redirected from every forbidden page" since the page-level redirects and the nav visibility are driven by the same `canWrite()`/admin-only logic. **Full suite: 94/94 passing** (52 attendance + 7 punch-resolution, both pre-existing and unchanged, + 35 new) — confirmed nothing else broke.
+
+**Mobile:** the only three pages a viewer can reach (`/dashboard`, `/dashboard/attendance`, `/dashboard/reports` + detail) already got the Step 23 responsive treatment; this step didn't touch their table/card markup, only which buttons render inside `RowActions` on Attendance, which is used identically inside both the desktop table cell and the mobile card.
+
+**Verified:**
+- `npx tsc --noEmit`: zero errors across the whole project.
+- `npm run build`: 24 routes, same count as before this step (no routes added/removed — this step is entirely logic/UI, no new pages), compiles cleanly with real production credentials.
+- Migration applied and verified directly against the live database (table rename, row count, constraint names all confirmed via read-only queries) — no test data created or touched.
+- **What I could not verify by clicking through the live app** (no browser tool, no viewer-role login credentials in this session): actually logging in as a real viewer account and confirming the sidebar/redirects/hidden buttons behave as expected in the browser. The unit tests assert the exact same logic the pages and actions run, and `tsc`/`build` confirm nothing is broken at compile time, but a human should still create one real viewer user via the Users page and click through Dashboard → Attendance → Reports → (try) Payroll/Workers/Roster/Users once on a real device.
+
+---
+
+## All 25 steps complete. App is in production; the attendance/payroll pipeline correctly handles double shifts end-to-end, a latent stale-data caching bug was found and fixed, the biometric bridge no longer fails wholesale on large first-run backfills, the Attendance page supports instant client-side search/status/department filtering, admins can see biometric bridge health directly on the Dashboard, the 5 most-used pages (plus the dashboard shell/sidebar) are usable in portrait on a phone without rotating to landscape, a forgotten checkout no longer silently swallows the following day's check-in, and a third terminal-scoped read-only "viewer" role now exists alongside admin and supervisor.

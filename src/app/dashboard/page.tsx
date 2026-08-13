@@ -5,7 +5,7 @@ import {
   terminals,
   departments,
   workers,
-  supervisorScopes,
+  accessScopes,
   shifts,
   attendanceRecords,
 } from "@/db/schema";
@@ -90,8 +90,8 @@ export default async function DashboardPage() {
   } else {
     const scopes = await db
       .select()
-      .from(supervisorScopes)
-      .where(eq(supervisorScopes.userId, session.user.id));
+      .from(accessScopes)
+      .where(eq(accessScopes.userId, session.user.id));
 
     const allDepts = await db.select().from(departments);
     const ids: string[] = [];

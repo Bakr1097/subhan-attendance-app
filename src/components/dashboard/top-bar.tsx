@@ -11,10 +11,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import type { Role } from "@/lib/roles";
 
 interface TopBarProps {
   userName: string;
-  userRole: "admin" | "supervisor";
+  userRole: Role;
   onMenuClick?: () => void;
 }
 

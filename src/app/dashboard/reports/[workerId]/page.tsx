@@ -7,7 +7,7 @@ import {
   shifts,
   shiftAssignments,
   attendanceRecords,
-  supervisorScopes,
+  accessScopes,
 } from "@/db/schema";
 import { eq, and, gte, lte, inArray } from "drizzle-orm";
 import { DetailClient, type DayEntry } from "./detail-client";
@@ -62,8 +62,8 @@ export default async function WorkerDetailPage({
   if (session.user.role !== "admin") {
     const scopes = await db
       .select()
-      .from(supervisorScopes)
-      .where(eq(supervisorScopes.userId, session.user.id));
+      .from(accessScopes)
+      .where(eq(accessScopes.userId, session.user.id));
     const allowed = scopes.some(
       (s) =>
         s.terminalId === worker.terminalId &&

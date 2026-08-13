@@ -8,10 +8,11 @@ import {
   terminals,
   shiftAssignments,
   attendanceRecords,
-  supervisorScopes,
+  accessScopes,
 } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { flagMissingCheckout, type ShiftData } from "@/lib/attendance";
+import { canWrite } from "@/lib/access-control";
 import {
   AttendanceClient,
   type AttendanceEntry,
@@ -44,8 +45,8 @@ export default async function AttendancePage({
   } else {
     const scopes = await db
       .select()
-      .from(supervisorScopes)
-      .where(eq(supervisorScopes.userId, session.user.id));
+      .from(accessScopes)
+      .where(eq(accessScopes.userId, session.user.id));
 
     allowedTerminalIds = Array.from(new Set(scopes.map((s) => s.terminalId)));
 
@@ -62,6 +63,11 @@ export default async function AttendancePage({
     }
     allowedDeptIds = Array.from(new Set(ids));
   }
+
+  // Viewer (Step 25) sees identical scoped data to a supervisor on this page
+  // but can't edit anything — passed down so the client hides Edit/Absent/
+  // Leave instead of rendering buttons that would 401 when clicked.
+  const canEdit = canWrite(session.user.role);
 
   const visibleTerminals = allTerminals.filter((t) =>
     allowedTerminalIds.includes(t.id)
@@ -251,6 +257,7 @@ export default async function AttendancePage({
         name: t.name,
       }))}
       entries={entries}
+      canEdit={canEdit}
     />
   );
 }

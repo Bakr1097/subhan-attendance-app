@@ -2,10 +2,12 @@
 
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { users, supervisorScopes, auditLog } from "@/db/schema";
+import { users, accessScopes, auditLog } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { hash } from "bcryptjs";
 import { revalidatePath } from "next/cache";
+import type { Role } from "@/lib/roles";
+import { roleNeedsScope, wouldSelfDemote } from "@/lib/access-control";
 
 async function requireAdmin() {
   const session = await auth();
@@ -43,7 +45,7 @@ export interface UserCreatePayload {
   name: string;
   email: string;
   password: string;
-  role: "admin" | "supervisor";
+  role: Role;
   terminalId: string | null;
   departmentId: string | null;
 }
@@ -51,7 +53,7 @@ export interface UserCreatePayload {
 export interface UserEditPayload {
   name: string;
   email: string;
-  role: "admin" | "supervisor";
+  role: Role;
   terminalId: string | null;
   departmentId: string | null;
 }
@@ -62,8 +64,8 @@ export async function createUser(payload: UserCreatePayload) {
   if (!payload.name.trim()) throw new Error("Name is required");
   if (!payload.email.trim()) throw new Error("Email is required");
   if (!payload.password) throw new Error("Password is required");
-  if (payload.role === "supervisor" && !payload.terminalId) {
-    throw new Error("Terminal is required for supervisors");
+  if (roleNeedsScope(payload.role) && !payload.terminalId) {
+    throw new Error("Terminal is required for this role");
   }
 
   const passwordHash = await hash(payload.password, 12);
@@ -88,8 +90,8 @@ export async function createUser(payload: UserCreatePayload) {
     throw e;
   }
 
-  if (payload.role === "supervisor" && payload.terminalId) {
-    await db.insert(supervisorScopes).values({
+  if (roleNeedsScope(payload.role) && payload.terminalId) {
+    await db.insert(accessScopes).values({
       userId,
       terminalId: payload.terminalId,
       departmentId: payload.departmentId || null,
@@ -115,7 +117,7 @@ export async function editUser(id: string, payload: UserEditPayload) {
     .limit(1);
   if (!existing) throw new Error("User not found");
 
-  if (id === session.user.id && payload.role !== "admin") {
+  if (wouldSelfDemote(session.user.id, id, payload.role)) {
     throw new Error("You cannot demote your own account");
   }
 
@@ -140,9 +142,9 @@ export async function editUser(id: string, payload: UserEditPayload) {
     throw e;
   }
 
-  await db.delete(supervisorScopes).where(eq(supervisorScopes.userId, id));
-  if (payload.role === "supervisor" && payload.terminalId) {
-    await db.insert(supervisorScopes).values({
+  await db.delete(accessScopes).where(eq(accessScopes.userId, id));
+  if (roleNeedsScope(payload.role) && payload.terminalId) {
+    await db.insert(accessScopes).values({
       userId: id,
       terminalId: payload.terminalId,
       departmentId: payload.departmentId || null,

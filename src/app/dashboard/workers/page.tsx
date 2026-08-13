@@ -6,7 +6,7 @@ import {
   departments,
   shifts,
   terminals,
-  supervisorScopes,
+  accessScopes,
 } from "@/db/schema";
 import { eq, and, or, ilike } from "drizzle-orm";
 import {
@@ -20,6 +20,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { WorkerForm, WorkerStatusToggle } from "./worker-form";
 import { Search } from "lucide-react";
+import { canWrite } from "@/lib/access-control";
 
 export default async function WorkersPage({
   searchParams,
@@ -28,6 +29,9 @@ export default async function WorkersPage({
 }) {
   const session = await auth();
   if (!session) redirect("/login");
+  // Worker records include PINs and pay rates — a viewer (Step 25) never
+  // reaches this page.
+  if (!canWrite(session.user.role)) redirect("/dashboard");
 
   // ── Load all reference data ─────────────────────────────────────────────────
   const allTerminals = await db
@@ -52,8 +56,8 @@ export default async function WorkersPage({
   } else {
     const scopes = await db
       .select()
-      .from(supervisorScopes)
-      .where(eq(supervisorScopes.userId, session.user.id));
+      .from(accessScopes)
+      .where(eq(accessScopes.userId, session.user.id));
 
     allowedTerminalIds = Array.from(new Set(scopes.map((s) => s.terminalId)));
 

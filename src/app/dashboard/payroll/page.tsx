@@ -5,11 +5,12 @@ import {
   workers,
   departments,
   terminals,
-  supervisorScopes,
+  accessScopes,
 } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { getPayrollCutoffTime } from "@/lib/settings";
 import { computePayrollForWorkers, STATUS_MULTIPLIER } from "@/lib/payroll-report";
+import { canWrite } from "@/lib/access-control";
 import { PayrollClient, type PayrollEntry } from "./payroll-client";
 
 export default async function PayrollPage({
@@ -19,6 +20,10 @@ export default async function PayrollPage({
 }) {
   const session = await auth();
   if (!session) redirect("/login");
+  // Wage rates/payable amounts must never appear in a viewer's session
+  // (Step 25) — a viewer never reaches this page at all, not just a
+  // read-only version of it.
+  if (!canWrite(session.user.role)) redirect("/dashboard");
 
   const closingDate = searchParams.date ?? new Date().toISOString().slice(0, 10);
   const cutoffTime = await getPayrollCutoffTime();
@@ -40,8 +45,8 @@ export default async function PayrollPage({
   } else {
     const scopes = await db
       .select()
-      .from(supervisorScopes)
-      .where(eq(supervisorScopes.userId, session.user.id));
+      .from(accessScopes)
+      .where(eq(accessScopes.userId, session.user.id));
 
     allowedTerminalIds = Array.from(new Set(scopes.map((s) => s.terminalId)));
 

@@ -46,12 +46,14 @@ import {
   type UserCreatePayload,
   type UserEditPayload,
 } from "./actions";
+import type { Role } from "@/lib/roles";
+import { roleNeedsScope } from "@/lib/access-control";
 
 type UserRow = {
   id: string;
   name: string;
   email: string;
-  role: "admin" | "supervisor";
+  role: Role;
   isActive: boolean;
   createdAt: string;
   terminalId: string | null;
@@ -74,7 +76,7 @@ const emptyCreate = {
   name: "",
   email: "",
   password: "",
-  role: "supervisor" as "admin" | "supervisor",
+  role: "supervisor" as Role,
   terminalId: "",
   departmentId: "",
 };
@@ -102,7 +104,7 @@ export function UsersClient({
   const [editForm, setEditForm] = useState({
     name: "",
     email: "",
-    role: "supervisor" as "admin" | "supervisor",
+    role: "supervisor" as Role,
     terminalId: "",
     departmentId: "",
   });
@@ -206,7 +208,9 @@ export function UsersClient({
                       className={
                         u.role === "admin"
                           ? "bg-purple-100 text-purple-800 hover:bg-purple-100"
-                          : "bg-blue-100 text-blue-800 hover:bg-blue-100"
+                          : u.role === "supervisor"
+                          ? "bg-blue-100 text-blue-800 hover:bg-blue-100"
+                          : "bg-teal-100 text-teal-800 hover:bg-teal-100"
                       }
                     >
                       {u.role}
@@ -339,7 +343,7 @@ export function UsersClient({
                 onValueChange={(v) =>
                   setCreateForm((f) => ({
                     ...f,
-                    role: v as "admin" | "supervisor",
+                    role: v as Role,
                     terminalId: "",
                     departmentId: "",
                   }))
@@ -350,12 +354,13 @@ export function UsersClient({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="supervisor">Supervisor</SelectItem>
+                  <SelectItem value="viewer">Viewer</SelectItem>
                   <SelectItem value="admin">Admin</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            {createForm.role === "supervisor" && (
+            {roleNeedsScope(createForm.role) && (
               <>
                 <div className="space-y-1.5">
                   <Label>Terminal</Label>
@@ -483,7 +488,7 @@ export function UsersClient({
                 onValueChange={(v) =>
                   setEditForm((f) => ({
                     ...f,
-                    role: v as "admin" | "supervisor",
+                    role: v as Role,
                     terminalId: "",
                     departmentId: "",
                   }))
@@ -494,12 +499,13 @@ export function UsersClient({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="supervisor">Supervisor</SelectItem>
+                  <SelectItem value="viewer">Viewer</SelectItem>
                   <SelectItem value="admin">Admin</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            {editForm.role === "supervisor" && (
+            {roleNeedsScope(editForm.role) && (
               <>
                 <div className="space-y-1.5">
                   <Label>Terminal</Label>

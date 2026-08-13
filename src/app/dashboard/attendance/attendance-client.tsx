@@ -289,9 +289,11 @@ function LeaveDialog({
 function RowActions({
   entry,
   workDate,
+  canEdit,
 }: {
   entry: AttendanceEntry;
   workDate: string;
+  canEdit: boolean;
 }) {
   const { toast } = useToast();
   const [editOpen, setEditOpen] = useState(false);
@@ -321,6 +323,13 @@ function RowActions({
   // Absent/Leave only make sense on the "no record yet" placeholder row — a
   // worker with a real shift row is clearly present, not absent (Step 19).
   const isPlaceholderRow = entry.recordId === null;
+
+  // Viewer (Step 25): no edit surface at all, not even a disabled button —
+  // the corresponding server actions also reject viewers independently, this
+  // is purely so the button never appears in the first place.
+  if (!canEdit) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
 
   return (
     <>
@@ -414,11 +423,13 @@ export function AttendanceClient({
   terminalId,
   visibleTerminals,
   entries,
+  canEdit,
 }: {
   workDate: string;
   terminalId: string;
   visibleTerminals: Terminal[];
   entries: AttendanceEntry[];
+  canEdit: boolean;
 }) {
   const router = useRouter();
   const today = new Date().toISOString().slice(0, 10);
@@ -782,7 +793,7 @@ export function AttendanceClient({
                       </TableCell>
 
                       <TableCell>
-                        <RowActions entry={entry} workDate={workDate} />
+                        <RowActions entry={entry} workDate={workDate} canEdit={canEdit} />
                       </TableCell>
                     </TableRow>
                   ))
@@ -895,7 +906,7 @@ export function AttendanceClient({
                   </div>
 
                   <div className="pt-2 border-t">
-                    <RowActions entry={entry} workDate={workDate} />
+                    <RowActions entry={entry} workDate={workDate} canEdit={canEdit} />
                   </div>
                 </div>
               ))

@@ -1,7 +1,7 @@
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { users, supervisorScopes, terminals, departments } from "@/db/schema";
+import { users, accessScopes, terminals, departments } from "@/db/schema";
 import { asc } from "drizzle-orm";
 import { UsersClient } from "./users-client";
 
@@ -19,7 +19,7 @@ export default async function UsersPage() {
 
   const [allUsers, allScopes, allTerminals, allDepts] = await Promise.all([
     db.select().from(users).orderBy(asc(users.createdAt)),
-    db.select().from(supervisorScopes),
+    db.select().from(accessScopes),
     db.select().from(terminals).orderBy(asc(terminals.name)),
     db.select().from(departments).orderBy(asc(departments.name)),
   ]);

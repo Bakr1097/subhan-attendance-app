@@ -2,10 +2,11 @@
 
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { workers, terminals, supervisorScopes } from "@/db/schema";
+import { workers, terminals, accessScopes } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { hash } from "bcryptjs";
 import { revalidatePath } from "next/cache";
+import { canWrite } from "@/lib/access-control";
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 
@@ -15,14 +16,19 @@ async function getSession() {
   return session;
 }
 
+// Worker records (PINs, pay type/rate, device IDs) are write-only surfaces —
+// a viewer must never reach here (Step 25), checked explicitly rather than
+// "role !== admin" so a read-only role can't fall through to the
+// scoped-write branch below.
 async function requireWorkerAccess(terminalId: string, departmentId: string) {
   const session = await getSession();
+  if (!canWrite(session.user.role)) throw new Error("Unauthorized");
   if (session.user.role === "admin") return session;
 
   const scopes = await db
     .select()
-    .from(supervisorScopes)
-    .where(eq(supervisorScopes.userId, session.user.id));
+    .from(accessScopes)
+    .where(eq(accessScopes.userId, session.user.id));
 
   const allowed = scopes.some(
     (s) =>
