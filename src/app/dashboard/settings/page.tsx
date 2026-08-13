@@ -1,6 +1,6 @@
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
-import { getPayrollCutoffTime } from "@/lib/settings";
+import { getPayrollCutoffTime, getMaxOpenShiftHours } from "@/lib/settings";
 import { SettingsClient } from "./settings-client";
 
 export default async function SettingsPage() {
@@ -8,6 +8,12 @@ export default async function SettingsPage() {
   if (!session || session.user.role !== "admin") redirect("/dashboard");
 
   const payrollCutoffTime = await getPayrollCutoffTime();
+  const maxOpenShiftHours = await getMaxOpenShiftHours();
 
-  return <SettingsClient payrollCutoffTime={payrollCutoffTime} />;
+  return (
+    <SettingsClient
+      payrollCutoffTime={payrollCutoffTime}
+      maxOpenShiftHours={maxOpenShiftHours}
+    />
+  );
 }

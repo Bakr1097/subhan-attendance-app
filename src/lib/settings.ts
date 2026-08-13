@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 
 const DEFAULTS: Record<string, string> = {
   payrollCutoffTime: "14:30",
+  maxOpenShiftHours: "14",
 };
 
 export async function getSetting(key: string): Promise<string> {
@@ -27,6 +28,12 @@ export async function setSetting(key: string, value: string): Promise<void> {
 
 export async function getPayrollCutoffTime(): Promise<string> {
   return getSetting("payrollCutoffTime");
+}
+
+export async function getMaxOpenShiftHours(): Promise<number> {
+  const raw = await getSetting("maxOpenShiftHours");
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 14;
 }
 
 // ─── Biometric bridge heartbeat ────────────────────────────────────────────

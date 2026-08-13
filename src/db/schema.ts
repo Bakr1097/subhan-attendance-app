@@ -149,9 +149,10 @@ export const attendanceRecords = pgTable("attendance_records", {
 
 export const auditLog = pgTable("audit_log", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  actorUserId: uuid("actor_user_id")
-    .notNull()
-    .references(() => users.id),
+  // Nullable (Step 24): system-generated entries (e.g. "stale_shift_skipped",
+  // written by resolvePunch() with no authenticated user in context) have no
+  // actor. Every human-triggered write still passes a real actorUserId.
+  actorUserId: uuid("actor_user_id").references(() => users.id),
   action: text("action").notNull(),
   entityType: text("entity_type").notNull(),
   entityId: uuid("entity_id").notNull(),

@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { attendanceRecords, shifts } from "@/db/schema";
+import { attendanceRecords, shifts, auditLog } from "@/db/schema";
 import { eq, and, isNull, isNotNull, desc } from "drizzle-orm";
 import {
   computeLate,
@@ -8,6 +8,8 @@ import {
   type ShiftData,
 } from "@/lib/attendance";
 import { resolveShiftForWorker } from "@/lib/shift-resolution";
+import { getMaxOpenShiftHours } from "@/lib/settings";
+import { isOpenRecordStale } from "@/lib/open-shift-cap";
 
 /**
  * Shared punch-resolution logic (Step 19) used by both the kiosk
@@ -80,6 +82,11 @@ async function shiftDataFor(shiftId: string | null): Promise<ShiftData | null> {
  *   the open record) or checkOutAt (of the worker's most recent record) is
  *   reported as a duplicate instead of being applied again — this is what
  *   lets the biometric bridge safely resend a batch after a failed sync.
+ * - (Step 24) If the open record's checkInAt is more than `maxOpenShiftHours`
+ *   before this punch, it's too old to plausibly be this punch's checkout
+ *   (most likely a forgotten checkout followed by a new day's check-in). The
+ *   stale record is left open — still surfaced as "Missing checkout" for
+ *   manual correction — and this punch becomes a new check-in instead.
  */
 export async function resolvePunch(
   worker: PunchWorkerContext,
@@ -94,44 +101,60 @@ export async function resolvePunch(
       return { action: "duplicate", recordId: open.id };
     }
 
-    const shiftData = await shiftDataFor(open.resolvedShiftId);
-    const now = new Date();
-    const flags = shiftData
-      ? computeAllFlags(open.checkInAt!, timestamp, shiftData, open.workDate, now)
-      : {
-          isLate: open.isLate,
-          lateMinutes: open.lateMinutes,
-          leftEarly: false,
-          earlyLeaveMinutes: 0,
-          overtimeMinutes: 0,
-          workedMinutes: computeWorkedMinutes(open.checkInAt, timestamp),
-          checkoutMissing: false,
-        };
+    const maxOpenShiftHours = await getMaxOpenShiftHours();
+    const stale = isOpenRecordStale(open.checkInAt!, timestamp, maxOpenShiftHours);
 
-    await db
-      .update(attendanceRecords)
-      .set({
-        checkOutAt: timestamp,
-        checkOutPhotoUrl: options.checkOutPhotoUrl ?? open.checkOutPhotoUrl,
-        ...flags,
-        updatedAt: now,
-      })
-      .where(eq(attendanceRecords.id, open.id));
+    if (!stale) {
+      const shiftData = await shiftDataFor(open.resolvedShiftId);
+      const now = new Date();
+      const flags = shiftData
+        ? computeAllFlags(open.checkInAt!, timestamp, shiftData, open.workDate, now)
+        : {
+            isLate: open.isLate,
+            lateMinutes: open.lateMinutes,
+            leftEarly: false,
+            earlyLeaveMinutes: 0,
+            overtimeMinutes: 0,
+            workedMinutes: computeWorkedMinutes(open.checkInAt, timestamp),
+            checkoutMissing: false,
+          };
 
-    return { action: "check-out", recordId: open.id };
-  }
+      await db
+        .update(attendanceRecords)
+        .set({
+          checkOutAt: timestamp,
+          checkOutPhotoUrl: options.checkOutPhotoUrl ?? open.checkOutPhotoUrl,
+          ...flags,
+          updatedAt: now,
+        })
+        .where(eq(attendanceRecords.id, open.id));
 
-  // No open record — check whether this exact timestamp already closed the
-  // worker's most recent shift (a resent checkout punch).
-  const [latest] = await db
-    .select()
-    .from(attendanceRecords)
-    .where(eq(attendanceRecords.workerId, worker.id))
-    .orderBy(desc(attendanceRecords.checkInAt))
-    .limit(1);
+      return { action: "check-out", recordId: open.id };
+    }
 
-  if (latest?.checkOutAt && latest.checkOutAt.getTime() === timestamp.getTime()) {
-    return { action: "duplicate", recordId: latest.id };
+    // Stale — leave `open` untouched and fall through to create a new
+    // check-in below, same as the "no open record" path.
+    await db.insert(auditLog).values({
+      actorUserId: null,
+      action: "stale_shift_skipped",
+      entityType: "attendance_record",
+      entityId: open.id,
+      beforeJson: { checkInAt: open.checkInAt!.toISOString() },
+      afterJson: { newCheckInAt: timestamp.toISOString() },
+    });
+  } else {
+    // No open record — check whether this exact timestamp already closed
+    // the worker's most recent shift (a resent checkout punch).
+    const [latest] = await db
+      .select()
+      .from(attendanceRecords)
+      .where(eq(attendanceRecords.workerId, worker.id))
+      .orderBy(desc(attendanceRecords.checkInAt))
+      .limit(1);
+
+    if (latest?.checkOutAt && latest.checkOutAt.getTime() === timestamp.getTime()) {
+      return { action: "duplicate", recordId: latest.id };
+    }
   }
 
   const { shiftId, shiftData } = await resolveShiftForWorker(
