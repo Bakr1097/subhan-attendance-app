@@ -33,3 +33,18 @@ export async function updateMaxOpenShiftHours(value: number) {
 
   revalidatePath("/dashboard/settings");
 }
+
+export async function updateKioskRefreshMinutes(value: number) {
+  const session = await auth();
+  if (!session) throw new Error("Unauthorized");
+  if (session.user.role !== "admin") throw new Error("Unauthorized");
+
+  if (!Number.isInteger(value) || value < 5 || value > 240) {
+    throw new Error("Kiosk refresh interval must be a whole number between 5 and 240");
+  }
+
+  await setSetting("kioskRefreshMinutes", String(value));
+
+  revalidatePath("/dashboard/settings");
+  revalidatePath("/kiosk");
+}

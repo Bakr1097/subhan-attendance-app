@@ -362,10 +362,12 @@ export function KioskClient({
   terminalId,
   terminalName,
   workers: initialWorkers,
+  refreshMinutes,
 }: {
   terminalId: string;
   terminalName: string;
   workers: WorkerEntry[];
+  refreshMinutes: number;
 }) {
   const [workers, setWorkers] = useState(initialWorkers);
   const [stage, setStage] = useState<KioskStage>({ tag: "grid" });
@@ -462,7 +464,10 @@ export function KioskClient({
     };
   }, []);
 
-  // ── Worker refresh every 5 minutes while online ───────────────────────────────
+  // ── Worker refresh on an admin-configurable interval while online ──────────────
+  // Interval length comes from app_settings ("kioskRefreshMinutes"), read once
+  // server-side at page load and passed in as a prop — deliberately not
+  // re-fetched on a timer, since that would defeat the point of reducing polling.
 
   useEffect(() => {
     if (!isOnline) return;
@@ -480,9 +485,9 @@ export function KioskClient({
       } catch {}
     }
 
-    const id = setInterval(refreshWorkers, 5 * 60 * 1000);
+    const id = setInterval(refreshWorkers, refreshMinutes * 60 * 1000);
     return () => clearInterval(id);
-  }, [isOnline, terminalId]);
+  }, [isOnline, terminalId, refreshMinutes]);
 
   // ── Auto-reset after success ──────────────────────────────────────────────────
 

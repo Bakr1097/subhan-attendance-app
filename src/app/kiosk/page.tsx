@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { terminals, workers, departments, attendanceRecords } from "@/db/schema";
 import { eq, and, isNull, isNotNull } from "drizzle-orm";
 import Link from "next/link";
+import { getKioskRefreshMinutes } from "@/lib/settings";
 import { KioskClient, type WorkerEntry } from "./kiosk-client";
 
 // DB reads use no-store fetches (see src/lib/db.ts) so results are always
@@ -102,11 +103,14 @@ export default async function KioskPage({
     checkedIn: openSet.has(w.id),
   }));
 
+  const kioskRefreshMinutes = await getKioskRefreshMinutes();
+
   return (
     <KioskClient
       terminalId={terminalId}
       terminalName={terminal.name}
       workers={workerList}
+      refreshMinutes={kioskRefreshMinutes}
     />
   );
 }
