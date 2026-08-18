@@ -188,12 +188,19 @@ export default async function WorkerDetailPage({
   const leaveDays = new Set(
     records.filter((r) => r.status === "leave").map((r) => r.workDate)
   ).size;
+  // Auto-closed stale shifts (Step 27) — never got a real checkout, so they
+  // must not count toward "Present" or "Total Shifts" — but still need a
+  // visible tally so a compliance failure isn't invisible in this summary.
+  const incompleteDays = new Set(
+    records.filter((r) => r.status === "incomplete").map((r) => r.workDate)
+  ).size;
 
   const stats = {
     present: presentDays,
     totalShifts: records.filter((r) => r.status === "present").length,
     absent: absentDays,
     leave: leaveDays,
+    incomplete: incompleteDays,
     totalWorkedMinutes: records.reduce((s, r) => s + (r.workedMinutes ?? 0), 0),
     lateCount: records.filter((r) => r.isLate).length,
   };

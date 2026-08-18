@@ -167,6 +167,13 @@ export default async function ReportsPage({
     const totalShifts = presentRecs.length;
     const absent = new Set(recs.filter((r) => r.status === "absent").map((r) => r.workDate)).size;
     const leave = new Set(recs.filter((r) => r.status === "leave").map((r) => r.workDate)).size;
+    // Auto-closed stale shifts (Step 27) — excluded from present/totalShifts
+    // (never got a real checkout) but still occupy the day, so they must not
+    // be counted as "no record" either; tracked separately so a compliance
+    // failure has its own visible column instead of disappearing.
+    const incomplete = new Set(
+      recs.filter((r) => r.status === "incomplete").map((r) => r.workDate)
+    ).size;
     const recordedDays = new Set(recs.map((r) => r.workDate)).size;
     const noRecord = Math.max(0, elapsed - recordedDays);
     const totalWorkedMinutes = recs.reduce(
@@ -184,6 +191,7 @@ export default async function ReportsPage({
       totalShifts,
       absent,
       leave,
+      incomplete,
       noRecord,
       totalWorkedMinutes,
       lateCount,

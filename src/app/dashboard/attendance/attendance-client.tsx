@@ -47,7 +47,7 @@ export interface AttendanceEntry {
   shiftSequence: number | null;
   checkInAt: string | null;
   checkOutAt: string | null;
-  status: "present" | "absent" | "leave" | null;
+  status: "present" | "absent" | "leave" | "incomplete" | null;
   leaveReason: string | null;
   isLate: boolean;
   lateMinutes: number;
@@ -409,6 +409,13 @@ function StatusBadge({ status }: { status: AttendanceEntry["status"] }) {
       </Badge>
     );
   }
+  if (status === "incomplete") {
+    return (
+      <Badge variant="secondary" className="bg-orange-100 text-orange-700">
+        Did not check out
+      </Badge>
+    );
+  }
   return (
     <Badge variant="secondary" className="bg-blue-100 text-blue-700">
       Leave
@@ -493,6 +500,11 @@ export function AttendanceClient({
   const present = dayStatuses.filter((s) => s === "present").length;
   const absent = dayStatuses.filter((s) => s === "absent").length;
   const onLeave = dayStatuses.filter((s) => s === "leave").length;
+  // Auto-closed stale shifts (Step 27) — never got a real checkout, and must
+  // never be counted as "present" — get their own always-visible tally so a
+  // compliance failure can't blend into the "no record" bucket or vanish
+  // from the totals.
+  const incomplete = dayStatuses.filter((s) => s === "incomplete").length;
   const noRecord = dayStatuses.filter((s) => !s).length;
   const late = entries.filter((e) => e.isLate).length;
   const missingCheckout = entries.filter((e) => e.checkoutMissing).length;
@@ -595,6 +607,10 @@ export function AttendanceClient({
               <span className="font-semibold text-blue-600">{onLeave}</span>{" "}
               <span className="text-muted-foreground">leave</span>
             </span>
+            <span>
+              <span className="font-semibold text-orange-600">{incomplete}</span>{" "}
+              <span className="text-muted-foreground">did not check out</span>
+            </span>
             {noRecord > 0 && (
               <span>
                 <span className="font-semibold text-slate-500">{noRecord}</span>{" "}
@@ -633,6 +649,7 @@ export function AttendanceClient({
               <option value="present">Present</option>
               <option value="absent">Absent</option>
               <option value="leave">Leave</option>
+              <option value="incomplete">Did not check out</option>
               <option value="no_record">No record</option>
               <option value="late">Late</option>
               <option value="missing_checkout">Missing checkout</option>

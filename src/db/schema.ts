@@ -135,8 +135,12 @@ export const attendanceRecords = pgTable("attendance_records", {
   checkInPhotoUrl: text("check_in_photo_url"),
   checkOutAt: timestamp("check_out_at", { withTimezone: true }),
   checkOutPhotoUrl: text("check_out_photo_url"),
+  // "incomplete" (Step 27): a check-in whose open shift was auto-closed
+  // because it went stale (see open-shift-cap.ts) — never had a real
+  // checkout, is permanently excluded from future open-record matching, and
+  // must not be counted as a completed "present" day anywhere it's tallied.
   status: text("status")
-    .$type<"present" | "absent" | "leave">()
+    .$type<"present" | "absent" | "leave" | "incomplete">()
     .notNull()
     .default("present"),
   leaveReason: text("leave_reason"),

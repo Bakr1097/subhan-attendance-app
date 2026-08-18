@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { attendanceRecords, shifts, auditLog } from "@/db/schema";
-import { eq, and, isNull, isNotNull, desc } from "drizzle-orm";
+import { eq, and, isNull, isNotNull } from "drizzle-orm";
 import {
   computeLate,
   computeAllFlags,
@@ -9,7 +9,7 @@ import {
 } from "@/lib/attendance";
 import { resolveShiftForWorker } from "@/lib/shift-resolution";
 import { getMaxOpenShiftHours } from "@/lib/settings";
-import { isOpenRecordStale } from "@/lib/open-shift-cap";
+import { resolveOpenRecords, findDuplicateRecord } from "@/lib/open-shift-cap";
 
 /**
  * Shared punch-resolution logic (Step 19) used by both the kiosk
@@ -21,6 +21,12 @@ import { isOpenRecordStale } from "@/lib/open-shift-cap";
  * handles both same-day double shifts and overnight shifts closed the next
  * calendar day, without depending on the caller knowing which workDate the
  * open shift was recorded under.
+ *
+ * (Step 27) A worker can have MORE THAN ONE open record at a time — Step 24
+ * introduced that possibility (a stale record is auto-closed instead of
+ * being deleted, see below) but never taught the resolution logic to expect
+ * it. `resolveOpenRecords()` (open-shift-cap.ts) is what makes "which open
+ * record is this punch actually for" deterministic instead of arbitrary.
  */
 
 export interface PunchWorkerContext {
@@ -40,20 +46,26 @@ export type PunchOutcome =
   | { action: "check-out"; recordId: string }
   | { action: "duplicate"; recordId: string };
 
-/** The worker's currently open record, if any — regardless of workDate. */
-export async function findOpenRecord(workerId: string) {
-  const [open] = await db
+/**
+ * ALL of the worker's currently-open records — regardless of workDate.
+ * (Step 27) There can legitimately be more than one: a stale record is
+ * auto-closed to "incomplete" rather than deleted, but until this punch
+ * arrives, an old abandoned record and today's genuine one can coexist.
+ * "present" excludes anything already auto-closed — an incomplete record
+ * must never be picked up again.
+ */
+async function findOpenRecords(workerId: string) {
+  return db
     .select()
     .from(attendanceRecords)
     .where(
       and(
         eq(attendanceRecords.workerId, workerId),
         isNotNull(attendanceRecords.checkInAt),
-        isNull(attendanceRecords.checkOutAt)
+        isNull(attendanceRecords.checkOutAt),
+        eq(attendanceRecords.status, "present")
       )
-    )
-    .limit(1);
-  return open ?? null;
+    );
 }
 
 async function shiftDataFor(shiftId: string | null): Promise<ShiftData | null> {
@@ -78,15 +90,20 @@ async function shiftDataFor(shiftId: string | null): Promise<ShiftData | null> {
  * - Otherwise this punch opens a new record (check-in) on `workDate`, with
  *   shiftSequence = however many records already exist for that worker on
  *   that date, + 1.
- * - A punch whose timestamp exactly matches an already-stored checkInAt (of
- *   the open record) or checkOutAt (of the worker's most recent record) is
- *   reported as a duplicate instead of being applied again — this is what
- *   lets the biometric bridge safely resend a batch after a failed sync.
- * - (Step 24) If the open record's checkInAt is more than `maxOpenShiftHours`
- *   before this punch, it's too old to plausibly be this punch's checkout
- *   (most likely a forgotten checkout followed by a new day's check-in). The
- *   stale record is left open — still surfaced as "Missing checkout" for
- *   manual correction — and this punch becomes a new check-in instead.
+ * - (Step 27) Duplicate detection checks this punch's timestamp against
+ *   EVERY one of the worker's records (open, closed, or auto-closed
+ *   "incomplete") for an exact match on checkInAt or checkOutAt — not just
+ *   whichever record a lookup happened to return. This is what lets the
+ *   biometric bridge safely resend a batch after a partial sync failure
+ *   (Step 20), regardless of how many open records the worker has.
+ * - (Step 24 + 27) Every one of the worker's open records whose checkInAt is
+ *   more than `maxOpenShiftHours` before this punch is too old to plausibly
+ *   be this punch's checkout (most likely a forgotten checkout). Each such
+ *   record is auto-closed — marked "incomplete", never given a checkout
+ *   time — so it stays visible as a compliance failure but can never be
+ *   picked up again by a later punch. Of whatever open records remain (not
+ *   stale), the single most recent is the one this punch closes as a
+ *   checkout; if none remain, this punch becomes a new check-in.
  */
 export async function resolvePunch(
   worker: PunchWorkerContext,
@@ -94,19 +111,60 @@ export async function resolvePunch(
   timestamp: Date,
   options: PunchOptions = {}
 ): Promise<PunchOutcome> {
-  const open = await findOpenRecord(worker.id);
+  // Duplicate check first, independent of open-record state (Step 27).
+  const workerRecords = await db
+    .select({
+      id: attendanceRecords.id,
+      checkInAt: attendanceRecords.checkInAt,
+      checkOutAt: attendanceRecords.checkOutAt,
+    })
+    .from(attendanceRecords)
+    .where(eq(attendanceRecords.workerId, worker.id));
 
-  if (open) {
-    if (open.checkInAt && open.checkInAt.getTime() === timestamp.getTime()) {
-      return { action: "duplicate", recordId: open.id };
+  const duplicateId = findDuplicateRecord(workerRecords, timestamp);
+  if (duplicateId) {
+    return { action: "duplicate", recordId: duplicateId };
+  }
+
+  const openRecords = await findOpenRecords(worker.id);
+  const now = new Date();
+
+  if (openRecords.length > 0) {
+    const maxOpenShiftHours = await getMaxOpenShiftHours();
+    const { toClose, current } = resolveOpenRecords(
+      openRecords.map((r) => ({ id: r.id, checkInAt: r.checkInAt! })),
+      timestamp,
+      maxOpenShiftHours
+    );
+
+    for (const staleId of toClose) {
+      const stale = openRecords.find((r) => r.id === staleId)!;
+      await db
+        .update(attendanceRecords)
+        .set({
+          status: "incomplete",
+          checkoutMissing: true,
+          updatedAt: now,
+        })
+        .where(eq(attendanceRecords.id, staleId));
+
+      await db.insert(auditLog).values({
+        actorUserId: null,
+        action: "stale_shift_auto_closed",
+        entityType: "attendance_record",
+        entityId: staleId,
+        beforeJson: { status: "present", checkInAt: stale.checkInAt!.toISOString() },
+        afterJson: {
+          status: "incomplete",
+          checkoutMissing: true,
+          newCheckInAt: timestamp.toISOString(),
+        },
+      });
     }
 
-    const maxOpenShiftHours = await getMaxOpenShiftHours();
-    const stale = isOpenRecordStale(open.checkInAt!, timestamp, maxOpenShiftHours);
-
-    if (!stale) {
+    if (current) {
+      const open = openRecords.find((r) => r.id === current)!;
       const shiftData = await shiftDataFor(open.resolvedShiftId);
-      const now = new Date();
       const flags = shiftData
         ? computeAllFlags(open.checkInAt!, timestamp, shiftData, open.workDate, now)
         : {
@@ -130,30 +188,6 @@ export async function resolvePunch(
         .where(eq(attendanceRecords.id, open.id));
 
       return { action: "check-out", recordId: open.id };
-    }
-
-    // Stale — leave `open` untouched and fall through to create a new
-    // check-in below, same as the "no open record" path.
-    await db.insert(auditLog).values({
-      actorUserId: null,
-      action: "stale_shift_skipped",
-      entityType: "attendance_record",
-      entityId: open.id,
-      beforeJson: { checkInAt: open.checkInAt!.toISOString() },
-      afterJson: { newCheckInAt: timestamp.toISOString() },
-    });
-  } else {
-    // No open record — check whether this exact timestamp already closed
-    // the worker's most recent shift (a resent checkout punch).
-    const [latest] = await db
-      .select()
-      .from(attendanceRecords)
-      .where(eq(attendanceRecords.workerId, worker.id))
-      .orderBy(desc(attendanceRecords.checkInAt))
-      .limit(1);
-
-    if (latest?.checkOutAt && latest.checkOutAt.getTime() === timestamp.getTime()) {
-      return { action: "duplicate", recordId: latest.id };
     }
   }
 

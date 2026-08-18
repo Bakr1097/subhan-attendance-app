@@ -25,6 +25,7 @@ export interface WorkerSummary {
   totalShifts: number;
   absent: number;
   leave: number;
+  incomplete: number;
   noRecord: number;
   totalWorkedMinutes: number;
   lateCount: number;
@@ -83,6 +84,7 @@ function downloadCSV(
     "Total Shifts",
     "Absent",
     "Leave",
+    "Did Not Check Out",
     "No Record",
     "Total Hours",
     "Late Arrivals",
@@ -96,6 +98,7 @@ function downloadCSV(
     s.totalShifts,
     s.absent,
     s.leave,
+    s.incomplete,
     s.noRecord,
     fmtHours(s.totalWorkedMinutes),
     s.lateCount,
@@ -107,6 +110,7 @@ function downloadCSV(
       totalShifts: acc.totalShifts + s.totalShifts,
       absent: acc.absent + s.absent,
       leave: acc.leave + s.leave,
+      incomplete: acc.incomplete + s.incomplete,
       noRecord: acc.noRecord + s.noRecord,
       totalWorkedMinutes: acc.totalWorkedMinutes + s.totalWorkedMinutes,
       lateCount: acc.lateCount + s.lateCount,
@@ -116,6 +120,7 @@ function downloadCSV(
       totalShifts: 0,
       absent: 0,
       leave: 0,
+      incomplete: 0,
       noRecord: 0,
       totalWorkedMinutes: 0,
       lateCount: 0,
@@ -130,6 +135,7 @@ function downloadCSV(
     totals.totalShifts,
     totals.absent,
     totals.leave,
+    totals.incomplete,
     totals.noRecord,
     fmtHours(totals.totalWorkedMinutes),
     totals.lateCount,
@@ -193,6 +199,7 @@ export function ReportsClient({
       totalShifts: acc.totalShifts + s.totalShifts,
       absent: acc.absent + s.absent,
       leave: acc.leave + s.leave,
+      incomplete: acc.incomplete + s.incomplete,
       noRecord: acc.noRecord + s.noRecord,
       totalWorkedMinutes: acc.totalWorkedMinutes + s.totalWorkedMinutes,
       lateCount: acc.lateCount + s.lateCount,
@@ -202,6 +209,7 @@ export function ReportsClient({
       totalShifts: 0,
       absent: 0,
       leave: 0,
+      incomplete: 0,
       noRecord: 0,
       totalWorkedMinutes: 0,
       lateCount: 0,
@@ -334,6 +342,9 @@ export function ReportsClient({
                   <TableHead className="text-center">Absent</TableHead>
                   <TableHead className="text-center">Leave</TableHead>
                   <TableHead className="text-center hidden sm:table-cell">
+                    Did Not Check Out
+                  </TableHead>
+                  <TableHead className="text-center hidden sm:table-cell">
                     No Record
                   </TableHead>
                   <TableHead className="text-right">Total Hours</TableHead>
@@ -346,7 +357,7 @@ export function ReportsClient({
                 {summaries.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={10}
+                      colSpan={11}
                       className="text-center text-muted-foreground py-10"
                     >
                       No workers found for this period.
@@ -403,6 +414,17 @@ export function ReportsClient({
                         <TableCell className="text-center hidden sm:table-cell">
                           <span
                             className={
+                              s.incomplete > 0
+                                ? "font-semibold text-orange-600"
+                                : "text-muted-foreground"
+                            }
+                          >
+                            {s.incomplete}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-center hidden sm:table-cell">
+                          <span
+                            className={
                               s.noRecord > 0
                                 ? "text-amber-600"
                                 : "text-muted-foreground"
@@ -449,6 +471,9 @@ export function ReportsClient({
                       </TableCell>
                       <TableCell className="text-center text-blue-600">
                         {totals.leave}
+                      </TableCell>
+                      <TableCell className="text-center hidden sm:table-cell text-orange-600">
+                        {totals.incomplete}
                       </TableCell>
                       <TableCell className="text-center hidden sm:table-cell text-amber-600">
                         {totals.noRecord}
@@ -504,6 +529,12 @@ export function ReportsClient({
                         </div>
                       </div>
                       <div>
+                        <div className="text-xs text-muted-foreground">Did Not Check Out</div>
+                        <div className={s.incomplete > 0 ? "font-semibold text-orange-600" : "text-muted-foreground"}>
+                          {s.incomplete}
+                        </div>
+                      </div>
+                      <div>
                         <div className="text-xs text-muted-foreground">No Record</div>
                         <div className={s.noRecord > 0 ? "text-amber-600" : "text-muted-foreground"}>
                           {s.noRecord}
@@ -543,6 +574,10 @@ export function ReportsClient({
                     <div>
                       <div className="text-xs text-muted-foreground font-normal">Leave</div>
                       <div className="text-blue-600">{totals.leave}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground font-normal">Did Not Check Out</div>
+                      <div className="text-orange-600">{totals.incomplete}</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground font-normal">No Record</div>

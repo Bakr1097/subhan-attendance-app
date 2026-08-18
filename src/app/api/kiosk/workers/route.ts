@@ -40,7 +40,10 @@ export async function GET(req: NextRequest) {
             and(
               eq(attendanceRecords.terminalId, terminalId),
               isNotNull(attendanceRecords.checkInAt),
-              isNull(attendanceRecords.checkOutAt)
+              isNull(attendanceRecords.checkOutAt),
+              // Step 27: an auto-closed stale shift (status "incomplete")
+              // must never make a worker's tile show as checked in.
+              eq(attendanceRecords.status, "present")
             )
           )
       : [];

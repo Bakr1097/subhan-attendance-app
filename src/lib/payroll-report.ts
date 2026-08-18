@@ -126,7 +126,11 @@ export async function computePayrollForWorkers(
 
   for (const workerId of workerIds) {
     const recs = byWorker.get(workerId) ?? [];
-    const shiftsWorked = recs.length;
+    // Step 27: an auto-closed stale shift ("incomplete") never got a real
+    // checkout, so it must not count toward a paid shift — but it stays in
+    // `recs` for the checkoutMissing scan below so payroll still surfaces
+    // the compliance gap before a closing is finalized.
+    const shiftsWorked = recs.filter((r) => r.status !== "incomplete").length;
 
     const checkoutMissing = recs.some((r) => {
       if (!r.checkInAt || r.checkOutAt) return false;

@@ -20,7 +20,7 @@ export interface DayEntry {
   shiftName: string | null;
   checkInAt: string | null;
   checkOutAt: string | null;
-  status: "present" | "absent" | "leave" | null;
+  status: "present" | "absent" | "leave" | "incomplete" | null;
   workedMinutes: number | null;
   isLate: boolean;
   lateMinutes: number;
@@ -100,6 +100,12 @@ function StatusBadge({ status }: { status: DayEntry["status"] }) {
         Absent
       </Badge>
     );
+  if (status === "incomplete")
+    return (
+      <Badge variant="secondary" className="bg-orange-100 text-orange-700 text-xs">
+        Did not check out
+      </Badge>
+    );
   return (
     <Badge variant="secondary" className="bg-blue-100 text-blue-700 text-xs">
       Leave
@@ -130,6 +136,7 @@ export function DetailClient({
     totalShifts: number;
     absent: number;
     leave: number;
+    incomplete: number;
     totalWorkedMinutes: number;
     lateCount: number;
   };
@@ -168,6 +175,10 @@ export function DetailClient({
         <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
           <span className="text-2xl font-bold text-blue-700">{stats.leave}</span>
           <span className="text-sm text-blue-600">Leave</span>
+        </div>
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-orange-50 border border-orange-200 rounded-xl">
+          <span className="text-2xl font-bold text-orange-700">{stats.incomplete}</span>
+          <span className="text-sm text-orange-600">Did not check out</span>
         </div>
         <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl">
           <span className="text-2xl font-bold text-slate-700">

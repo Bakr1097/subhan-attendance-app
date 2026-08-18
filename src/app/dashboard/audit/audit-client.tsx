@@ -42,6 +42,7 @@ const ACTION_LABELS: Record<string, string> = {
   create_record: "Created record",
   mark_absent: "Marked absent",
   mark_leave: "Marked leave",
+  stale_shift_auto_closed: "Auto-closed stale shift",
 };
 
 const ACTION_COLORS: Record<
@@ -52,6 +53,7 @@ const ACTION_COLORS: Record<
   create_record: { bg: "bg-green-100", text: "text-green-700" },
   mark_absent: { bg: "bg-red-100", text: "text-red-700" },
   mark_leave: { bg: "bg-purple-100", text: "text-purple-700" },
+  stale_shift_auto_closed: { bg: "bg-orange-100", text: "text-orange-700" },
 };
 
 const FIELD_LABELS: Record<string, string> = {
