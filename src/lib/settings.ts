@@ -69,6 +69,19 @@ export async function getBiometricSyncStatus(): Promise<BiometricSyncStatus | nu
   }
 }
 
+// Step 28: the bridge pings this endpoint every run (every few minutes,
+// around the clock) but most runs report nothing new — same `success` and
+// the same static "No new punches since last sync." message. Writing on
+// every one of those was pure wasted Neon compute for a value that hadn't
+// changed. We now skip the write when the incoming heartbeat is identical
+// in substance to what's stored, EXCEPT we still force a write at least
+// once every KEEPALIVE_MS even with no change, so the Dashboard's "last
+// seen" timestamp can't go stale indefinitely during a long quiet spell
+// (e.g. overnight with no punches). Tradeoff: "last seen" is now accurate
+// to within KEEPALIVE_MS, not to the minute — acceptable since the point
+// of the health card is detecting a dead bridge, not a live clock.
+const HEARTBEAT_KEEPALIVE_MS = 60 * 60 * 1000; // force a refresh write at most once/hour when nothing changed
+
 export async function recordBiometricHeartbeat(input: {
   ranAt: string;
   success: boolean;
@@ -76,6 +89,19 @@ export async function recordBiometricHeartbeat(input: {
   message: string | null;
 }): Promise<void> {
   const prev = await getBiometricSyncStatus();
+
+  const changed =
+    prev === null ||
+    prev.success !== input.success ||
+    prev.message !== input.message ||
+    prev.recordsSynced !== input.recordsSynced;
+  const staleEnoughToRefresh =
+    prev !== null && Date.now() - new Date(prev.ranAt).getTime() >= HEARTBEAT_KEEPALIVE_MS;
+
+  if (!changed && !staleEnoughToRefresh) {
+    return;
+  }
+
   const status: BiometricSyncStatus = {
     ranAt: input.ranAt,
     success: input.success,

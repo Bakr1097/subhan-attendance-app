@@ -17,7 +17,12 @@ import { flagMissingCheckout, type ShiftData } from "@/lib/attendance";
 import { getPayrollCutoffTime, getBiometricSyncStatus } from "@/lib/settings";
 import { computePayrollForWorkers, STATUS_MULTIPLIER } from "@/lib/payroll-report";
 
-const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+// Step 28: heartbeat writes are now throttled to at most once/hour when
+// nothing has changed (see recordBiometricHeartbeat in settings.ts), so
+// "last successful sync" can lag up to ~1 hour behind reality even when
+// the bridge is perfectly healthy. Widened from 15 to 90 minutes so a
+// quiet-but-alive bridge doesn't trip a false "may be down" warning.
+const DOWN_THRESHOLD_MS = 90 * 60 * 1000;
 
 function formatRelativeTime(iso: string): string {
   const diffMs = Math.max(0, Date.now() - new Date(iso).getTime());
@@ -178,7 +183,7 @@ export default async function DashboardPage() {
     : null;
   const bridgeMayBeDown =
     biometricStatus !== null &&
-    (biometricStatus.lastSuccessAt === null || minutesSinceSuccess! > FIFTEEN_MINUTES_MS);
+    (biometricStatus.lastSuccessAt === null || minutesSinceSuccess! > DOWN_THRESHOLD_MS);
 
   const now = new Date();
   let presentToday = 0;
