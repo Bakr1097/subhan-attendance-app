@@ -48,9 +48,20 @@ function eq<T>(label: string, actual: T, expected: T) {
 const WORK_DATE = "2024-06-04";
 const NEXT_DATE  = "2024-06-05";
 
-/** Helper: build a UTC Date from an ISO-like string at Zulu time. */
-function d(iso: string): Date {
-  return new Date(iso + ".000Z");
+// Every timestamp below is written as if it were a Pakistan-local wall-clock
+// reading ("2024-06-04T06:05:00" = 6:05 AM PKT) — the same way a real
+// checkInAt/checkOutAt instant would line up against a shift's local
+// startTime/endTime. d() converts it to the real UTC instant independently
+// of attendance.ts's own buildUtcDate() (a separately-written formula, not a
+// call into the code under test), so these fixtures actually exercise the
+// PKT→UTC conversion instead of merely being self-consistent with whatever
+// attendance.ts happens to do. Previously this helper just parsed the string
+// as literal UTC ("Zulu") — which passed only because it silently matched
+// the timezone bug being fixed here, not because it verified anything.
+const PKT_OFFSET_MS = 5 * 60 * 60_000; // Pakistan is UTC+5, no DST
+
+function d(pktLocalIso: string): Date {
+  return new Date(Date.parse(`${pktLocalIso}.000Z`) - PKT_OFFSET_MS);
 }
 
 /** Morning shift: 06:00 – 14:00, grace 10 min each side. */

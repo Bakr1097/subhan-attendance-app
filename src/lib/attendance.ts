@@ -40,10 +40,21 @@ export interface AttendanceFlags {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Build a UTC Date from a YYYY-MM-DD date string and an "HH:MM" time string. */
+// Shift start/end times (shifts.startTime / shifts.endTime) are entered and
+// stored as Pakistan local wall-clock time (e.g. "09:00" means 9 AM PKT), not
+// UTC — confirmed via the shift editor's plain <input type="time"> and
+// HANDOFF.md. Pakistan is UTC+5 year-round (no DST). checkInAt/checkOutAt are
+// real UTC instants, so shift boundaries must be converted to UTC the same
+// way before either side of a comparison means the same moment in time. This
+// mirrors payroll-report.ts's pktToUtc() — keep the two in sync.
+const PKT_OFFSET_MINUTES = 5 * 60;
+
+/** Build a UTC Date from a YYYY-MM-DD date string and an "HH:MM" PKT wall-clock time string. */
 function buildUtcDate(workDate: string, timeStr: string): Date {
   const hhmm = timeStr.slice(0, 5); // normalise "HH:MM:SS" → "HH:MM"
-  return new Date(`${workDate}T${hhmm}:00.000Z`);
+  const [h, m] = hhmm.split(":").map(Number);
+  const utcMinutes = h * 60 + m - PKT_OFFSET_MINUTES;
+  return new Date(Date.parse(`${workDate}T00:00:00.000Z`) + utcMinutes * 60_000);
 }
 
 /** Return the date string for the day after workDate (YYYY-MM-DD). */
