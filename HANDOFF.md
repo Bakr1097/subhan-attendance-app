@@ -704,4 +704,31 @@ Ran `npx tsx scripts/backfill-attendance-flags.ts --apply`. The first invocation
 
 ---
 
+### Step 32 — November Punch Repair Applied + Status-Only Close of Older Open Records ✓
+
+Payroll starts fresh this week (no wages were ever paid from the app), so instead of rewriting everything since Aug 12 the repair was limited to November, with only a status change for older open records.
+
+**Script changes (`scripts/repair-punch-records.ts`):**
+- `--since YYYY-MM-DD` — start of the re-pairing scope (PKT midnight).
+- `--leave-older` — touch nothing before `--since` (kept for completeness; not used).
+- `--older-status-only` — before `--since`, only mark `present` records with no check-out and a check-in older than `maxOpenShiftHours` as `incomplete` (+ `checkoutMissing`). No punch, workDate, flag or shiftSequence changes; pre-scope rows also keep their shiftSequence during renumbering (the first dry run showed 67 pre-scope rows would otherwise have been renumbered).
+- Invariants now cover the whole table: ≤1 open record per worker and no open record older than the cap (human-edited rows excepted).
+- `--apply` now requires `--promoted-at <ISO>` and aborts if any `stale_shift_skipped` row (only Step 24-era code writes those) appears after that instant. Replaces the earlier "any in the last 2h" heuristic, which would have blocked a valid apply right after the promotion.
+
+**Applied 2026-11-25 10:15 UTC** — `--since 2026-11-01 --older-status-only --apply --promoted-at 2026-11-25T09:56:53Z`, after a fresh Neon snapshot `pre-november-repair-2026-11-25` (`br-red-snow-aoc5qhht`, LSN 0/1EA06BE8, no compute). Kept as the restore point.
+- November (check-ins from 2026-11-01 PKT): 1,252 records → 723 — 325 with a check-out, 368 incomplete, 30 open. Identical to the earlier dry run. 206 repeat-press rows and 323 rows whose punch became another row's check-out were deleted; 98 re-filed to the PKT date; flags recomputed on 428.
+- Before November: 4,260 open records → `incomplete`, nothing else changed.
+- 68 workers applied, 0 skipped. Every change has a `punch_repair_update` (4,963) or `punch_repair_delete` (529) audit row with the full before/after.
+- Payroll auto-doubles over the last 30 closings: 4 (was 417 under the old rules).
+
+**Verified after apply:**
+- Fresh dry run with the same flags: 0 remaining changes.
+- Sami SUB-072: Nov 24 12:39→13:43; Nov 25 one record at 12:45:24 (5 repeat presses merged), open because he hadn't checked out yet. Adnan SUB-061: Nov 24 06:19→12:07, Nov 25 06:15→11:59.
+- No worker has more than one open record (0).
+- One open record older than 14h remains, deliberately: SUB-051 Muhammad Ashrif, 2026-07-19 04:11 PKT, created by hand (`create_record`) — human-edited rows are never touched by the script. He hasn't punched since.
+
+**Not done:** Aug 12 – Oct 31 punches were not re-paired, re-filed or re-flagged — those days show "Did not check out" rows on the Attendance page and Reports.
+
+---
+
 ## All 29 steps complete. App is in production; the attendance/payroll pipeline correctly handles double shifts end-to-end, a latent stale-data caching bug was found and fixed, the biometric bridge no longer fails wholesale on large first-run backfills, the Attendance page supports instant client-side search/status/department filtering, admins can see biometric bridge health directly on the Dashboard, the 5 most-used pages (plus the dashboard shell/sidebar) are usable in portrait on a phone without rotating to landscape, a forgotten checkout no longer silently swallows the following day's check-in, a third terminal-scoped read-only "viewer" role now exists alongside admin and supervisor, the kiosk's worker-list refresh interval is now admin-configurable (default 60 min, was hardcoded at 5) to reduce Neon compute usage, open-record resolution is now deterministic — a worker can no longer have an abandoned shift silently hijack a later punch, and a stale shift auto-closes as a clearly visible "did not check out" compliance record instead of vanishing into the wrong row, the biometric bridge's heartbeat now only writes to the database when something actually changed, cutting a write-every-few-minutes-around-the-clock pattern down to roughly hourly at most — and the attendance engine's timezone mislabeling bug (shift start/end times treated as UTC instead of Pakistan local) is fixed going forward, with the historical backfill reviewed, approved, and applied — 2,787 `attendance_records` rows corrected, verified against a fresh 0-changed dry run, with a Neon branch snapshot kept as a rollback point.

@@ -35,7 +35,15 @@
  * Usage:
  *   npx tsx scripts/repair-punch-records.ts                 # dry run
  *   npx tsx scripts/repair-punch-records.ts --csv out.csv   # dry run + per-record CSV
- *   npx tsx scripts/repair-punch-records.ts --apply         # writes (needs approval)
+ *   npx tsx scripts/repair-punch-records.ts --apply --promoted-at <iso>   # writes (needs approval)
+ *
+ *   --since YYYY-MM-DD  start of the re-pairing scope (PKT midnight; default 2026-08-12)
+ *   --leave-older       don't touch anything before --since at all (no re-filing,
+ *                       no "incomplete" marking) — the live code then closes those
+ *                       old open records as each worker next punches
+ *   --older-status-only before --since, only mark open records older than
+ *                       maxOpenShiftHours "incomplete" (status + checkoutMissing);
+ *                       no punch, date, flag or sequence changes
  */
 
 import { config } from "dotenv";
@@ -64,9 +72,19 @@ const APPLY = args.includes("--apply");
 const csvIdx = args.indexOf("--csv");
 const CSV_PATH = csvIdx !== -1 ? args[csvIdx + 1] : null;
 
-// The day before Step 24 went live (2026-08-13) — early enough that every
-// record later used as a "stale" anchor is inside scope (asserted below).
-const SCOPE_START = new Date("2026-08-12T00:00:00Z");
+// Default: the day before Step 24 went live (2026-08-13) — early enough that
+// every record later used as a "stale" anchor is inside scope (asserted
+// below). --since moves it (PKT midnight of that date).
+const sinceIdx = args.indexOf("--since");
+const SCOPE_START = sinceIdx !== -1
+  ? new Date(Date.parse(`${args[sinceIdx + 1]}T00:00:00Z`) - 5 * 3600_000)
+  : new Date("2026-08-12T00:00:00Z");
+const LEAVE_OLDER = args.includes("--leave-older");
+const OLDER_STATUS_ONLY = args.includes("--older-status-only");
+if (LEAVE_OLDER && OLDER_STATUS_ONLY) {
+  console.error("--leave-older and --older-status-only are mutually exclusive.");
+  process.exit(1);
+}
 const REPEAT_MS = 5 * 60_000;
 const SAMPLE_CODES = [
   "SUB-072", "SUB-061", "SUB-038", "SUB-050", "SUB-025",
@@ -336,6 +354,17 @@ function planWorker(workerId: string, recs: Rec[], L: Loaded, now: Date): Plan {
   // plus a forgotten checkout past the cap becomes "incomplete" — exactly
   // what Step 27 does to it on the worker's next punch.
   for (const r of preScope) {
+    if (LEAVE_OLDER) {
+      targets.push({ ...pick(r) });
+      continue;
+    }
+    if (OLDER_STATUS_ONLY) {
+      const staleOpen =
+        r.status === "present" && !r.check_out_at &&
+        now.getTime() - r.check_in_at!.getTime() > L.maxOpenShiftHours * 3600_000;
+      targets.push(staleOpen ? { ...pick(r), status: "incomplete", checkout_missing: true } : { ...pick(r) });
+      continue;
+    }
     const workDate = pktDateStr(r.check_in_at!);
     const stale =
       r.status === "present" && !r.check_out_at &&
@@ -382,9 +411,13 @@ function planWorker(workerId: string, recs: Rec[], L: Loaded, now: Date): Plan {
   }
   for (const list of Array.from(byDate.values())) {
     list.sort((a, b) => (a.check_in_at?.getTime() ?? 0) - (b.check_in_at?.getTime() ?? 0));
+    // Rows before scope keep their number too when they're meant to be left
+    // alone (--leave-older / --older-status-only).
+    const keepsNumber = (t: Target) =>
+      fixed.some((f) => f.id === t.id) ||
+      ((LEAVE_OLDER || OLDER_STATUS_ONLY) && preScope.some((p) => p.id === t.id));
     list.forEach((t, i) => {
-      const fixedRow = fixed.find((f) => f.id === t.id);
-      if (!fixedRow) t.shift_sequence = i + 1;
+      if (!keepsNumber(t)) t.shift_sequence = i + 1;
     });
   }
 
@@ -522,9 +555,10 @@ async function applyWorker(workerId: string, plan: Plan, fingerprint: string) {
 async function main() {
   const now = new Date();
   const L = await load();
+  console.log(`Scope: check-ins from ${SCOPE_START.toISOString()}${LEAVE_OLDER ? " (older rows left untouched)" : OLDER_STATUS_ONLY ? " (older rows: stale-open → incomplete only)" : ""}`);
   console.log(`Mode: ${APPLY ? "APPLY" : "DRY RUN (no writes)"}   now=${now.toISOString()}   maxOpenShiftHours=${L.maxOpenShiftHours}`);
 
-  if (L.closedAnchorsBeforeScope > 0) {
+  if (L.closedAnchorsBeforeScope > 0 && !LEAVE_OLDER && !OLDER_STATUS_ONLY) {
     throw new Error(`${L.closedAnchorsBeforeScope} stale anchor(s) before SCOPE_START have a check-out — widen the scope.`);
   }
 
@@ -548,8 +582,13 @@ async function main() {
       if (t.check_out_at && t.check_out_at.getTime() - t.check_in_at!.getTime() > capMs) throw new Error(`${code}: shift longer than cap on ${t.id}`);
       if (t.work_date !== pktDateStr(t.check_in_at!)) throw new Error(`${code}: workDate not PKT date on ${t.id}`);
     }
-    const open = scoped.filter((t) => t.status === "present" && !t.check_out_at);
+    // Whole table, not just scope (unless older rows are deliberately left alone).
+    const open = (LEAVE_OLDER ? scoped : plan.targets).filter(
+      (t) => t.status === "present" && t.check_in_at && !t.check_out_at && !L.lockedIds.has(t.id)
+    );
     if (open.length > 1) throw new Error(`${code}: ${open.length} open records after repair`);
+    const staleOpen = open.filter((t) => now.getTime() - t.check_in_at!.getTime() > capMs);
+    if (staleOpen.length) throw new Error(`${code}: open record older than ${L.maxOpenShiftHours}h after repair (${staleOpen[0].id})`);
     const ids = plan.targets.map((t) => t.id);
     if (new Set(ids).size !== ids.length) throw new Error(`${code}: duplicate record id in plan`);
   }
@@ -605,6 +644,12 @@ async function main() {
     "  flag changed, row created since Step 29 backfill": allUpdates.filter(
       (u) => u.before.created_at > sep17 && u.changed.some((f) => flagFields.includes(f))
     ).length,
+    "  before scope: open → incomplete (status only)": allUpdates.filter(
+      (u) => u.before.check_in_at! < SCOPE_START && u.changed.includes("status")
+    ).length,
+    "  before scope: any other field changed": allUpdates.filter(
+      (u) => u.before.check_in_at! < SCOPE_START && u.changed.some((f) => f !== "status" && f !== "checkout_missing")
+    ).length,
     "  shiftSequence only": allUpdates.filter((u) => u.changed.length === 1 && u.changed[0] === "shift_sequence").length,
     "rows never touched (human-edited or absent/leave)": L.records.filter((r) => !r.check_in_at || L.lockedIds.has(r.id)).length,
     "workers affected": new Set([...allUpdates.map((u) => u.before.worker_id), ...allDeletes.map((d) => d.before.worker_id)]).size,
@@ -646,10 +691,20 @@ async function main() {
   }
 
   // ── Apply ─────────────────────────────────────────────────────────────
-  const [recent] = await sql`select max(created_at) as last from audit_log where action = 'stale_shift_skipped'`;
-  if (recent?.last && now.getTime() - new Date(recent.last as string).getTime() < 2 * 3600_000) {
+  // Step 24-era code writes "stale_shift_skipped"; Step 27+ never does. Any
+  // such row after the promotion means old code is still serving punches
+  // and would undo this repair.
+  const promotedIdx = args.indexOf("--promoted-at");
+  if (promotedIdx === -1) {
+    throw new Error("--apply requires --promoted-at <ISO time Step 27+ code went live>.");
+  }
+  const promotedAt = new Date(args[promotedIdx + 1]);
+  if (isNaN(promotedAt.getTime())) throw new Error("--promoted-at is not a valid time.");
+  const [recent] = await sql`select count(*)::int as n, max(created_at) as last from audit_log
+    where action = 'stale_shift_skipped' and created_at > ${promotedAt}`;
+  if ((recent?.n as number) > 0) {
     throw new Error(
-      `Production wrote a Step 24-style stale_shift_skipped row at ${recent.last} — it is still running pre-Step-27 code, which would undo this repair. Aborting.`
+      `${recent.n} stale_shift_skipped row(s) written after ${promotedAt.toISOString()} (latest ${recent.last}) — pre-Step-27 code is still live. Aborting.`
     );
   }
   let done = 0;
