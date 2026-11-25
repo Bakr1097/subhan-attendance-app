@@ -111,3 +111,53 @@ export async function recordBiometricHeartbeat(input: {
   };
   await setSetting(BIOMETRIC_SYNC_STATUS_KEY, JSON.stringify(status));
 }
+
+// ─── Unmatched biometric device IDs (Step 30) ──────────────────────────────
+// Punches whose deviceUserId isn't mapped to any worker used to be returned
+// in the punch response and printed only on the bridge PC. They're now kept
+// in one app_settings JSON row (no migration) so an admin can see them on the
+// Dashboard. Only written when a batch actually contains unmatched IDs.
+const UNMATCHED_DEVICE_IDS_KEY = "biometricUnmatchedDeviceIds";
+
+export interface UnmatchedDeviceId {
+  deviceUserId: string;
+  punchCount: number;
+  firstPunchAt: string;
+  lastPunchAt: string;
+  lastSeenAt: string;
+}
+
+export async function getUnmatchedDeviceIds(): Promise<UnmatchedDeviceId[]> {
+  const raw = await getSetting(UNMATCHED_DEVICE_IDS_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as Record<string, UnmatchedDeviceId>;
+    return Object.values(parsed).sort((a, b) => b.lastPunchAt.localeCompare(a.lastPunchAt));
+  } catch {
+    return [];
+  }
+}
+
+export async function recordUnmatchedDeviceIds(
+  punches: { deviceUserId: string; timestamp: Date }[]
+): Promise<void> {
+  const existing = await getUnmatchedDeviceIds();
+  const byId: Record<string, UnmatchedDeviceId> = {};
+  for (const e of existing) byId[e.deviceUserId] = e;
+
+  const seenAt = new Date().toISOString();
+  for (const { deviceUserId, timestamp } of punches) {
+    const at = timestamp.toISOString();
+    const e = byId[deviceUserId];
+    if (!e) {
+      byId[deviceUserId] = { deviceUserId, punchCount: 1, firstPunchAt: at, lastPunchAt: at, lastSeenAt: seenAt };
+    } else {
+      e.punchCount++;
+      if (at < e.firstPunchAt) e.firstPunchAt = at;
+      if (at > e.lastPunchAt) e.lastPunchAt = at;
+      e.lastSeenAt = seenAt;
+    }
+  }
+  await setSetting(UNMATCHED_DEVICE_IDS_KEY, JSON.stringify(byId));
+}
+

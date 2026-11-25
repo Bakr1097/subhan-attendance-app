@@ -3,14 +3,12 @@ import { db } from "@/lib/db";
 import { workers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { resolvePunch } from "@/lib/punch-resolution";
+import { pktDateStr } from "@/lib/pkt-time";
+import { recordUnmatchedDeviceIds } from "@/lib/settings";
 
 interface Punch {
   deviceUserId: string;
   timestamp: string;
-}
-
-function utcDateStr(d: Date): string {
-  return d.toISOString().slice(0, 10);
 }
 
 export async function POST(req: NextRequest) {
@@ -33,6 +31,8 @@ export async function POST(req: NextRequest) {
   let duplicates = 0;
   const alreadyComplete = 0;
   const unmatched: string[] = [];
+  // Unknown device IDs with a valid timestamp, kept for the Dashboard (Step 30).
+  const unmatchedPunches: { deviceUserId: string; timestamp: Date }[] = [];
 
   for (const raw of rawPunches) {
     const punch = raw as Partial<Punch>;
@@ -54,6 +54,7 @@ export async function POST(req: NextRequest) {
 
     if (!worker) {
       unmatched.push(deviceUserId);
+      unmatchedPunches.push({ deviceUserId, timestamp });
       continue;
     }
 
@@ -62,7 +63,9 @@ export async function POST(req: NextRequest) {
     // out to be a NEW check-in; an overnight shift's checkout is found and
     // closed by resolvePunch() regardless of workDate (Step 19), so there is
     // no need to guess "does this belong to yesterday's night shift" here.
-    const workDate = utcDateStr(timestamp);
+    // (Step 30) Pakistan-local date, not UTC — the UTC date filed every punch
+    // between 00:00 and 04:59 PKT under the previous day.
+    const workDate = pktDateStr(timestamp);
 
     const outcome = await resolvePunch(
       {
@@ -82,6 +85,10 @@ export async function POST(req: NextRequest) {
     } else {
       checkedOut++;
     }
+  }
+
+  if (unmatchedPunches.length > 0) {
+    await recordUnmatchedDeviceIds(unmatchedPunches);
   }
 
   return NextResponse.json({

@@ -14,7 +14,11 @@ import { Building2, Layers, Users, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { flagMissingCheckout, type ShiftData } from "@/lib/attendance";
-import { getPayrollCutoffTime, getBiometricSyncStatus } from "@/lib/settings";
+import {
+  getPayrollCutoffTime,
+  getBiometricSyncStatus,
+  getUnmatchedDeviceIds,
+} from "@/lib/settings";
 import { computePayrollForWorkers, STATUS_MULTIPLIER } from "@/lib/payroll-report";
 
 // Step 28: heartbeat writes are now throttled to at most once/hour when
@@ -178,6 +182,21 @@ export default async function DashboardPage() {
   }
 
   const biometricStatus = isAdmin ? await getBiometricSyncStatus() : null;
+
+  // Step 30: device IDs the bridge sent that no worker is mapped to. An ID
+  // drops off this list as soon as it's assigned to a worker.
+  let unmatchedDeviceIds: Awaited<ReturnType<typeof getUnmatchedDeviceIds>> = [];
+  if (isAdmin) {
+    const all = await getUnmatchedDeviceIds();
+    if (all.length > 0) {
+      const mapped = await db
+        .select({ deviceUserId: workers.deviceUserId })
+        .from(workers)
+        .where(inArray(workers.deviceUserId, all.map((u) => u.deviceUserId)));
+      const mappedIds = new Set(mapped.map((m) => m.deviceUserId));
+      unmatchedDeviceIds = all.filter((u) => !mappedIds.has(u.deviceUserId));
+    }
+  }
   const minutesSinceSuccess = biometricStatus?.lastSuccessAt
     ? Date.now() - new Date(biometricStatus.lastSuccessAt).getTime()
     : null;
@@ -331,6 +350,24 @@ export default async function DashboardPage() {
                     <p className="text-xs text-muted-foreground">
                       {biometricStatus.message}
                     </p>
+                  )}
+                  {unmatchedDeviceIds.length > 0 && (
+                    <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-800 space-y-1">
+                      <p className="font-medium">
+                        {unmatchedDeviceIds.length} device ID
+                        {unmatchedDeviceIds.length === 1 ? "" : "s"} not mapped to any worker
+                        — these punches were not recorded
+                      </p>
+                      <ul className="text-xs space-y-0.5">
+                        {unmatchedDeviceIds.map((u) => (
+                          <li key={u.deviceUserId}>
+                            <span className="font-mono font-semibold">ID {u.deviceUserId}</span>{" "}
+                            · {u.punchCount} punch{u.punchCount === 1 ? "" : "es"} · last{" "}
+                            {formatRelativeTime(u.lastPunchAt)}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                   {bridgeMayBeDown && (
                     <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
