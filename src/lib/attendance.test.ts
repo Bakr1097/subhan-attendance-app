@@ -13,6 +13,7 @@ import {
   countDaysWorked,
   computeAllFlags,
   isCheckoutOverdue,
+  isLongShift,
   type ShiftData,
 } from "./attendance";
 
@@ -366,6 +367,25 @@ console.log("\n── isCheckoutOverdue (Step 33) ──");
   // check-in on a shift that "ended" at 16:30 after 30 minutes.
   eq("independent of shift times: 16:00 check-in, 30 min later → not overdue",
     isCheckoutOverdue(d("2026-11-25T16:00:00"), null, d("2026-11-25T16:30:00"), 11), false);
+}
+
+
+// ---------------------------------------------------------------------------
+// isLongShift (Step 34) — review flag for closed shifts over the threshold
+// ---------------------------------------------------------------------------
+console.log("\n── isLongShift (Step 34) ──");
+{
+  const cin = d("2026-11-24T07:55:00");
+  const h = (n: number) => new Date(cin.getTime() + n * 3_600_000);
+  eq("Bilal-style 12h30 shift → not flagged at 13h", isLongShift(cin, h(12.5), 13), false);
+  eq("exactly 13h → not flagged (strictly longer)", isLongShift(cin, h(13), 13), false);
+  eq("13h01 → flagged", isLongShift(cin, new Date(h(13).getTime() + 60_000), 13), true);
+  eq("Tahir 07:55→22:19 (14h24) → flagged", isLongShift(cin, d("2026-11-24T22:19:00"), 13), true);
+  eq("Akber-style reversed pair 23:35→13:04 (13h29) → flagged",
+    isLongShift(d("2026-11-19T23:35:00"), d("2026-11-20T13:04:00"), 13), true);
+  eq("open shift (no check-out) → never flagged", isLongShift(cin, null, 13), false);
+  eq("no check-in → never flagged", isLongShift(null, h(20), 13), false);
+  eq("threshold is configurable (10h)", isLongShift(cin, h(10.5), 10), true);
 }
 
 // ---------------------------------------------------------------------------

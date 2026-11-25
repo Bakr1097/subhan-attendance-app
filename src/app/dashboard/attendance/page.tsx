@@ -12,8 +12,8 @@ import {
   auditLog,
 } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
-import { isCheckoutOverdue } from "@/lib/attendance";
-import { getMissingCheckoutHours } from "@/lib/settings";
+import { isCheckoutOverdue, isLongShift } from "@/lib/attendance";
+import { getMissingCheckoutHours, getLongShiftReviewHours } from "@/lib/settings";
 import { pktDateStr } from "@/lib/pkt-time";
 import { canWrite } from "@/lib/access-control";
 import {
@@ -189,6 +189,7 @@ export default async function AttendancePage({
   }
 
   const missingCheckoutHours = await getMissingCheckoutHours();
+  const longShiftReviewHours = await getLongShiftReviewHours();
 
   // ── Build merged entries — one row per record, or one placeholder row ────────
   const now = new Date();
@@ -225,6 +226,7 @@ export default async function AttendancePage({
           workedMinutes: null,
           checkoutMissing: false,
           ignoredPunches: [],
+          longShift: false,
         },
       ];
     }
@@ -264,6 +266,8 @@ export default async function AttendancePage({
         workedMinutes: record.workedMinutes,
         checkoutMissing,
         ignoredPunches: ignoredByRecord.get(record.id) ?? [],
+        // Step 34: review flag only — never changes the record.
+        longShift: isLongShift(record.checkInAt, record.checkOutAt, longShiftReviewHours),
       };
     });
   });
@@ -278,6 +282,7 @@ export default async function AttendancePage({
       }))}
       entries={entries}
       canEdit={canEdit}
+      longShiftReviewHours={longShiftReviewHours}
     />
   );
 }

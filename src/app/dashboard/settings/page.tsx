@@ -6,6 +6,7 @@ import {
   getKioskRefreshMinutes,
   getMinShiftMinutes,
   getMissingCheckoutHours,
+  getLongShiftReviewHours,
 } from "@/lib/settings";
 import { SettingsClient } from "./settings-client";
 
@@ -18,6 +19,7 @@ export default async function SettingsPage() {
   const kioskRefreshMinutes = await getKioskRefreshMinutes();
   const minShiftMinutes = await getMinShiftMinutes();
   const missingCheckoutHours = await getMissingCheckoutHours();
+  const longShiftReviewHours = await getLongShiftReviewHours();
 
   return (
     <SettingsClient
@@ -26,6 +28,7 @@ export default async function SettingsPage() {
       kioskRefreshMinutes={kioskRefreshMinutes}
       minShiftMinutes={minShiftMinutes}
       missingCheckoutHours={missingCheckoutHours}
+      longShiftReviewHours={longShiftReviewHours}
     />
   );
 }

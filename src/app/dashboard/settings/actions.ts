@@ -80,3 +80,20 @@ export async function updateMissingCheckoutHours(value: number) {
   revalidatePath("/dashboard/attendance");
   revalidatePath("/dashboard");
 }
+
+// Step 34: a closed shift longer than this is flagged "Check this shift".
+export async function updateLongShiftReviewHours(value: number) {
+  const session = await auth();
+  if (!session) throw new Error("Unauthorized");
+  if (session.user.role !== "admin") throw new Error("Unauthorized");
+
+  if (!Number.isInteger(value) || value < 1 || value > 24) {
+    throw new Error("Long shift review threshold must be a whole number between 1 and 24");
+  }
+
+  await setSetting("longShiftReviewHours", String(value));
+
+  revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/attendance");
+  revalidatePath("/dashboard");
+}

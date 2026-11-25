@@ -12,13 +12,14 @@ import { eq, and, count, inArray } from "drizzle-orm";
 import { Building2, Layers, Users, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { isCheckoutOverdue } from "@/lib/attendance";
+import { isCheckoutOverdue, isLongShift } from "@/lib/attendance";
 import { pktDateStr } from "@/lib/pkt-time";
 import {
   getPayrollCutoffTime,
   getBiometricSyncStatus,
   getUnmatchedDeviceIds,
   getMissingCheckoutHours,
+  getLongShiftReviewHours,
 } from "@/lib/settings";
 import { computePayrollForWorkers, STATUS_MULTIPLIER } from "@/lib/payroll-report";
 
@@ -161,6 +162,7 @@ export default async function DashboardPage() {
   // Step 33: missing checkout is judged by time since check-in, so the
   // shifts lookup this used to need is gone.
   const missingCheckoutHours = await getMissingCheckoutHours();
+  const longShiftReviewHours = await getLongShiftReviewHours();
 
   // Payable figure uses the Step 18 closing-window model (not calendar day) so
   // it matches what the Payroll page would show for a closing run today.
@@ -203,6 +205,7 @@ export default async function DashboardPage() {
   let absentToday = 0;
   let lateToday = 0;
   let missingCheckoutToday = 0;
+  let longShiftToday = 0;
   let payableToday = 0;
 
   for (const w of scopedWorkers) {
@@ -222,6 +225,8 @@ export default async function DashboardPage() {
           ? isCheckoutOverdue(record.checkInAt, null, now, missingCheckoutHours)
           : record.checkoutMissing;
       if (checkoutMissing) missingCheckoutToday++;
+      // Step 34: review flag only.
+      if (isLongShift(record.checkInAt, record.checkOutAt, longShiftReviewHours)) longShiftToday++;
     }
 
     if (isAdmin && w.payType === "daily") {
@@ -279,6 +284,14 @@ export default async function DashboardPage() {
             <AlertTriangle className="w-3.5 h-3.5" />
             <span className="font-semibold">{missingCheckoutToday}</span> missing checkout
           </span>
+          {longShiftToday > 0 && (
+            <span
+              className="text-amber-800"
+              title={`Closed shifts longer than ${longShiftReviewHours}h — see "Check this shift" on the Attendance page`}
+            >
+              <span className="font-semibold">{longShiftToday}</span> to check
+            </span>
+          )}
           {isAdmin && (
             <span className="sm:ml-auto">
               <span className="text-muted-foreground mr-1.5">Today&apos;s Payable:</span>

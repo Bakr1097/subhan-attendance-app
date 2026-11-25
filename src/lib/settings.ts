@@ -8,6 +8,7 @@ const DEFAULTS: Record<string, string> = {
   kioskRefreshMinutes: "60",
   minShiftMinutes: "60",
   missingCheckoutHours: "11",
+  longShiftReviewHours: "13",
 };
 
 export async function getSetting(key: string): Promise<string> {
@@ -51,6 +52,13 @@ export async function getMissingCheckoutHours(): Promise<number> {
   const raw = await getSetting("missingCheckoutHours");
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n >= 1 && n <= 24 ? n : 11;
+}
+
+// Step 34: a closed shift longer than this gets a "Check this shift" flag.
+export async function getLongShiftReviewHours(): Promise<number> {
+  const raw = await getSetting("longShiftReviewHours");
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 && n <= 24 ? n : 13;
 }
 
 export async function getKioskRefreshMinutes(): Promise<number> {

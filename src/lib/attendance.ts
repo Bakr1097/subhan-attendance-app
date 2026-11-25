@@ -237,6 +237,21 @@ export function isCheckoutOverdue(
   return now.getTime() - checkInAt.getTime() >= afterHours * 3_600_000;
 }
 
+/**
+ * Step 34: review flag for a closed shift longer than `reviewHours`. Long
+ * shifts are routine here (12–13.5h for some workers), but beyond that a
+ * "shift" is often a check-out paired with the next day's check-in after a
+ * missed punch. Review only — records are never changed automatically.
+ */
+export function isLongShift(
+  checkInAt: Date | null,
+  checkOutAt: Date | null,
+  reviewHours: number
+): boolean {
+  if (!checkInAt || !checkOutAt) return false;
+  return checkOutAt.getTime() - checkInAt.getTime() > reviewHours * 3_600_000;
+}
+
 // ---------------------------------------------------------------------------
 // 7. countDaysWorked
 // ---------------------------------------------------------------------------

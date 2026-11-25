@@ -13,6 +13,7 @@ import {
   updateKioskRefreshMinutes,
   updateMinShiftMinutes,
   updateMissingCheckoutHours,
+  updateLongShiftReviewHours,
 } from "./actions";
 
 export function SettingsClient({
@@ -21,12 +22,14 @@ export function SettingsClient({
   kioskRefreshMinutes,
   minShiftMinutes,
   missingCheckoutHours,
+  longShiftReviewHours,
 }: {
   payrollCutoffTime: string;
   maxOpenShiftHours: number;
   kioskRefreshMinutes: number;
   minShiftMinutes: number;
   missingCheckoutHours: number;
+  longShiftReviewHours: number;
 }) {
   const { toast } = useToast();
   const [value, setValue] = useState(payrollCutoffTime);
@@ -43,6 +46,9 @@ export function SettingsClient({
 
   const [missingHoursValue, setMissingHoursValue] = useState(String(missingCheckoutHours));
   const [missingHoursPending, startMissingHoursTransition] = useTransition();
+
+  const [longShiftValue, setLongShiftValue] = useState(String(longShiftReviewHours));
+  const [longShiftPending, startLongShiftTransition] = useTransition();
 
   function handleSave() {
     startTransition(async () => {
@@ -108,6 +114,21 @@ export function SettingsClient({
     startMissingHoursTransition(async () => {
       try {
         await updateMissingCheckoutHours(Number(missingHoursValue));
+        toast({ title: "Settings saved" });
+      } catch (err) {
+        toast({
+          title: "Error",
+          description: (err as Error).message,
+          variant: "destructive",
+        });
+      }
+    });
+  }
+
+  function handleSaveLongShift() {
+    startLongShiftTransition(async () => {
+      try {
+        await updateLongShiftReviewHours(Number(longShiftValue));
         toast({ title: "Settings saved" });
       } catch (err) {
         toast({
@@ -306,6 +327,44 @@ export function SettingsClient({
             disabled={missingHoursPending || !missingHoursValue}
           >
             {missingHoursPending ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              "Save"
+            )}
+          </Button>
+        </CardContent>
+      </Card>
+      <Card className="max-w-md">
+        <CardHeader>
+          <CardTitle className="text-base">Long Shift Review</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="long-shift-review-hours">Flag shifts longer than (hours)</Label>
+            <Input
+              id="long-shift-review-hours"
+              type="number"
+              min={1}
+              max={24}
+              step={1}
+              value={longShiftValue}
+              onChange={(e) => setLongShiftValue(e.target.value)}
+              className="w-full sm:w-40"
+            />
+            <p className="text-xs text-muted-foreground">
+              A closed shift longer than this shows &quot;Check this shift&quot;
+              on the Attendance page and is counted on the Dashboard. Review
+              only — records are never changed automatically.
+            </p>
+          </div>
+          <Button
+            onClick={handleSaveLongShift}
+            disabled={longShiftPending || !longShiftValue}
+          >
+            {longShiftPending ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 Saving…

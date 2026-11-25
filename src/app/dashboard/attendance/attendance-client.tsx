@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { ChevronLeft, ChevronRight, Loader2, AlertTriangle } from "lucide-react";
+import { pktDateStr } from "@/lib/pkt-time";
 import {
   correctAttendance,
   markAbsent,
@@ -58,6 +59,8 @@ export interface AttendanceEntry {
   checkoutMissing: boolean;
   /** Step 33: ISO times of punches ignored by the minimum-shift rule. */
   ignoredPunches: string[];
+  /** Step 34: closed shift longer than the review threshold. */
+  longShift: boolean;
 }
 
 interface Terminal {
@@ -69,6 +72,19 @@ interface Terminal {
 
 /** Step 33: "punch ignored at 05:34" under the check-out — so a genuine early
  *  departure the minimum-shift rule swallowed can be corrected by hand. */
+/** Step 34: review flag for an unusually long closed shift. */
+function LongShiftNote({ show, hours }: { show: boolean; hours: number }) {
+  if (!show) return null;
+  return (
+    <span
+      className="mt-0.5 inline-flex w-fit items-center rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800"
+      title={`Longer than ${hours}h — check the punches. Often a check-out paired with the next check-in after a missed punch.`}
+    >
+      Check this shift
+    </span>
+  );
+}
+
 function IgnoredPunchNote({ punches }: { punches: string[] }) {
   if (punches.length === 0) return null;
   return (
@@ -447,15 +463,18 @@ export function AttendanceClient({
   visibleTerminals,
   entries,
   canEdit,
+  longShiftReviewHours,
 }: {
   workDate: string;
   terminalId: string;
   visibleTerminals: Terminal[];
   entries: AttendanceEntry[];
   canEdit: boolean;
+  longShiftReviewHours: number;
 }) {
   const router = useRouter();
-  const today = new Date().toISOString().slice(0, 10);
+  // Pakistan date, same as the server's default (Step 33/34).
+  const today = pktDateStr(new Date());
   const isToday = workDate === today;
 
   // ── Client-side search & filters (no server round-trip) ────────────────────
@@ -482,6 +501,8 @@ export function AttendanceClient({
         if (!e.isLate) return false;
       } else if (statusFilter === "missing_checkout") {
         if (!e.checkoutMissing) return false;
+      } else if (statusFilter === "long_shift") {
+        if (!e.longShift) return false;
       } else if (statusFilter === "no_record") {
         if (e.status !== null) return false;
       } else if (statusFilter) {
@@ -669,6 +690,7 @@ export function AttendanceClient({
               <option value="no_record">No record</option>
               <option value="late">Late</option>
               <option value="missing_checkout">Missing checkout</option>
+              <option value="long_shift">Check this shift</option>
             </select>
 
             <select
@@ -811,6 +833,7 @@ export function AttendanceClient({
                           </div>
                         )}
                         <IgnoredPunchNote punches={entry.ignoredPunches} />
+                        <LongShiftNote show={entry.longShift} hours={longShiftReviewHours} />
                       </TableCell>
 
                       <TableCell>
@@ -933,6 +956,7 @@ export function AttendanceClient({
                         </>
                       )}
                       <IgnoredPunchNote punches={entry.ignoredPunches} />
+                      <LongShiftNote show={entry.longShift} hours={longShiftReviewHours} />
                     </div>
                   </div>
 

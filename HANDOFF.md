@@ -749,4 +749,23 @@ Payroll starts fresh this week (no wages were ever paid from the app), so instea
 
 ---
 
+### Step 34 — "Check this shift" Review Flag for Long Shifts + Current Open-Record Fix ✓
+
+**Decision: pairing limit stays at 14h.** A November replay at 13h vs 14h fixed ~8 evening-crew mis-pairings (SUB-025, SUB-010, SUB-029, SUB-009) but broke 6 of Tahir SUB-068's real 13.1–13.6h shifts, two of Bilal SUB-066's (13.0–13.1h — which then reversed every pairing Nov 5–14), and one each for SUB-013 and SUB-070 — about 25 wrong pairs created for 8 fixed. Duration can't tell a real 13.5h shift from a reversed 13.5h pair, and once reversed the pairs come out at 10–12h, inside any cap. A real fix needs in/out direction from time of day (accurate shift times, or each worker's usual arrival learned from history).
+
+**Review flag (`longShiftReviewHours`, default 13).** New pure `isLongShift()` in `attendance.ts`: a *closed* shift strictly longer than the threshold. The Attendance page shows a "Check this shift" badge under the check-out (desktop and mobile) and has a matching status filter; the Dashboard shows "N to check" next to the missing-checkout count. Review only — records are never changed automatically. Settings page card (1–24 h).
+
+**Also:** the Attendance client's "today" (used for the date navigator) now uses `pktDateStr()`, matching the server default from Step 33.
+
+**Data fix, 2026-11-25 10:57 UTC (before payroll start)** — every current open record was compared with the worker's usual arrival / leaving time. Two workers were out of step; fixed in one guarded transaction after a Neon snapshot `pre-open-record-fix-2026-11-25` (`br-ancient-bonus-aocs5v9o`), with three `open_record_fix` audit rows:
+- Tahir SUB-068: his 22:19 check-out had been stored as a check-in (14h24 after his 07:55 check-in, past the cap) and today's 08:01 check-in had closed it. Now: Nov 24 07:55→22:19 (shows "Check this shift"), Nov 25 08:01 open — tonight's check-out (~13.5h) will close it.
+- Abbas SUB-050: today's 13:16 open "check-in" was really a check-out with no check-in → `incomplete`.
+Everyone else's open record is at their real arrival time (SUB-013, SUB-029, SUB-025, SUB-010, SUB-009 checked explicitly); SUB-075 and SUB-064 have no clear pattern and were left alone. No worker has more than one open record.
+
+**Verified:**
+- Tests: **152/152 passing** (67 attendance [+8] + 43 punch-resolution + 35 access-control + 7 pkt-time).
+- `npx tsc --noEmit`: zero errors. `npm run build`: 24 routes, compiles cleanly.
+
+---
+
 ## All 29 steps complete. App is in production; the attendance/payroll pipeline correctly handles double shifts end-to-end, a latent stale-data caching bug was found and fixed, the biometric bridge no longer fails wholesale on large first-run backfills, the Attendance page supports instant client-side search/status/department filtering, admins can see biometric bridge health directly on the Dashboard, the 5 most-used pages (plus the dashboard shell/sidebar) are usable in portrait on a phone without rotating to landscape, a forgotten checkout no longer silently swallows the following day's check-in, a third terminal-scoped read-only "viewer" role now exists alongside admin and supervisor, the kiosk's worker-list refresh interval is now admin-configurable (default 60 min, was hardcoded at 5) to reduce Neon compute usage, open-record resolution is now deterministic — a worker can no longer have an abandoned shift silently hijack a later punch, and a stale shift auto-closes as a clearly visible "did not check out" compliance record instead of vanishing into the wrong row, the biometric bridge's heartbeat now only writes to the database when something actually changed, cutting a write-every-few-minutes-around-the-clock pattern down to roughly hourly at most — and the attendance engine's timezone mislabeling bug (shift start/end times treated as UTC instead of Pakistan local) is fixed going forward, with the historical backfill reviewed, approved, and applied — 2,787 `attendance_records` rows corrected, verified against a fresh 0-changed dry run, with a Neon branch snapshot kept as a rollback point.
