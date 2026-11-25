@@ -81,6 +81,18 @@ export async function POST(req: NextRequest) {
     { checkInPhotoUrl: photoUrl, checkOutPhotoUrl: photoUrl }
   );
 
+  if (outcome.action === "ignored") {
+    // Step 33: too soon after check-in to be a check-out.
+    const inPkt = new Date(outcome.checkInAt.getTime() + 5 * 60 * 60_000);
+    const inStr = `${String(inPkt.getUTCHours()).padStart(2, "0")}:${String(inPkt.getUTCMinutes()).padStart(2, "0")}`;
+    return NextResponse.json(
+      {
+        error: `Already checked in at ${inStr}. Check-out is accepted ${outcome.minShiftMinutes} minutes after check-in.`,
+      },
+      { status: 409 }
+    );
+  }
+
   return NextResponse.json({
     // Step 31: a repeat press within 5 minutes is ignored server-side; show
     // the worker the same result as their original press so the kiosk tile

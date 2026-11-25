@@ -12,6 +12,7 @@ import {
   flagMissingCheckout,
   countDaysWorked,
   computeAllFlags,
+  isCheckoutOverdue,
   type ShiftData,
 } from "./attendance";
 
@@ -345,6 +346,27 @@ const missingOut = computeAllFlags(
 );
 eq("missing checkout flagged", missingOut.checkoutMissing, true);
 eq("worked is null when no checkout", missingOut.workedMinutes, null);
+
+
+// ---------------------------------------------------------------------------
+// isCheckoutOverdue (Step 33) — by time since check-in, not shift end
+// ---------------------------------------------------------------------------
+console.log("\n── isCheckoutOverdue (Step 33) ──");
+{
+  const cin = d("2026-11-25T04:30:00"); // 04:30 PKT
+  const h = (n: number) => new Date(cin.getTime() + n * 3_600_000);
+  eq("open 10h59m → not yet overdue", isCheckoutOverdue(cin, null, new Date(h(11).getTime() - 60_000), 11), false);
+  eq("open exactly 11h → overdue", isCheckoutOverdue(cin, null, h(11), 11), true);
+  eq("open 12h (Bilal-style long shift) → overdue warning", isCheckoutOverdue(cin, null, h(12), 11), true);
+  eq("checked out → never overdue", isCheckoutOverdue(cin, h(9), h(20), 11), false);
+  eq("no check-in → never overdue", isCheckoutOverdue(null, null, h(20), 11), false);
+  eq("threshold is configurable (8h)", isCheckoutOverdue(cin, null, h(8), 8), true);
+  // The old shift-end rule flagged a Morning (08:00–16:30) worker who
+  // checked in at 04:30 only after 16:30 PKT, i.e. 12h in; and a 16:00
+  // check-in on a shift that "ended" at 16:30 after 30 minutes.
+  eq("independent of shift times: 16:00 check-in, 30 min later → not overdue",
+    isCheckoutOverdue(d("2026-11-25T16:00:00"), null, d("2026-11-25T16:30:00"), 11), false);
+}
 
 // ---------------------------------------------------------------------------
 // Summary

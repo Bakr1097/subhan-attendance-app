@@ -9,9 +9,12 @@ import {
   shiftAssignments,
   attendanceRecords,
   accessScopes,
+  auditLog,
 } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
-import { flagMissingCheckout, type ShiftData } from "@/lib/attendance";
+import { isCheckoutOverdue } from "@/lib/attendance";
+import { getMissingCheckoutHours } from "@/lib/settings";
+import { pktDateStr } from "@/lib/pkt-time";
 import { canWrite } from "@/lib/access-control";
 import {
   AttendanceClient,
@@ -26,7 +29,8 @@ export default async function AttendancePage({
   const session = await auth();
   if (!session) redirect("/login");
 
-  const workDate = searchParams.date ?? new Date().toISOString().slice(0, 10);
+  // Step 33: "today" is the Pakistan date (was the UTC date — wrong 00:00–05:00 PKT).
+  const workDate = searchParams.date ?? pktDateStr(new Date());
 
   // ── Scoped terminals ─────────────────────────────────────────────────────────
   const allTerminals = await db
@@ -160,18 +164,31 @@ export default async function AttendancePage({
 
   const shiftMap = new Map(shiftRows.map((s) => [s.id, s]));
 
-  function toShiftData(shiftId: string | null): ShiftData | null {
-    const row = shiftId ? shiftMap.get(shiftId) : null;
-    return row
-      ? {
-          startTime: row.startTime,
-          endTime: row.endTime,
-          graceMinutes: row.graceMinutes,
-          earlyLeaveGraceMinutes: row.earlyLeaveGraceMinutes,
-          crossesMidnight: row.crossesMidnight,
-        }
-      : null;
+  // Step 33: punches ignored by the minimum-shift rule, per record, so a
+  // genuine early departure is visible and can be corrected by hand.
+  const recordIds = records.map((r) => r.id);
+  const ignoredRows =
+    recordIds.length > 0
+      ? await db
+          .select({ entityId: auditLog.entityId, afterJson: auditLog.afterJson })
+          .from(auditLog)
+          .where(
+            and(
+              eq(auditLog.action, "short_punch_ignored"),
+              inArray(auditLog.entityId, recordIds)
+            )
+          )
+      : [];
+  const ignoredByRecord = new Map<string, string[]>();
+  for (const row of ignoredRows) {
+    const punchAt = (row.afterJson as { punchAt?: string } | null)?.punchAt;
+    if (!punchAt) continue;
+    const list = ignoredByRecord.get(row.entityId) ?? [];
+    list.push(punchAt);
+    ignoredByRecord.set(row.entityId, list.sort());
   }
+
+  const missingCheckoutHours = await getMissingCheckoutHours();
 
   // ── Build merged entries — one row per record, or one placeholder row ────────
   const now = new Date();
@@ -207,17 +224,19 @@ export default async function AttendancePage({
           overtimeMinutes: 0,
           workedMinutes: null,
           checkoutMissing: false,
+          ignoredPunches: [],
         },
       ];
     }
 
     return recs.map((record) => {
       const shiftRow = record.resolvedShiftId ? shiftMap.get(record.resolvedShiftId) : null;
-      const shiftData = toShiftData(record.resolvedShiftId);
 
+      // Step 33: open for missingCheckoutHours since check-in (not shift
+      // end). Auto-closed "incomplete" rows keep their stored flag.
       const checkoutMissing =
-        record.checkInAt && !record.checkOutAt && shiftData
-          ? flagMissingCheckout(record.checkInAt, null, shiftData, record.workDate, now)
+        record.status === "present" && record.checkInAt && !record.checkOutAt
+          ? isCheckoutOverdue(record.checkInAt, null, now, missingCheckoutHours)
           : record.checkoutMissing;
 
       return {
@@ -244,6 +263,7 @@ export default async function AttendancePage({
         overtimeMinutes: record.overtimeMinutes,
         workedMinutes: record.workedMinutes,
         checkoutMissing,
+        ignoredPunches: ignoredByRecord.get(record.id) ?? [],
       };
     });
   });

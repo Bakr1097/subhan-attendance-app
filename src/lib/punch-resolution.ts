@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { attendanceRecords, shifts, auditLog } from "@/db/schema";
-import { eq, and, isNull, isNotNull } from "drizzle-orm";
+import { eq, and, isNull, isNotNull, sql } from "drizzle-orm";
 import {
   computeLate,
   computeAllFlags,
@@ -8,11 +8,12 @@ import {
   type ShiftData,
 } from "@/lib/attendance";
 import { resolveShiftForWorker } from "@/lib/shift-resolution";
-import { getMaxOpenShiftHours } from "@/lib/settings";
+import { getMaxOpenShiftHours, getMinShiftMinutes } from "@/lib/settings";
 import {
   resolveOpenRecords,
   findRepeatPunch,
   REPEAT_PUNCH_WINDOW_MS,
+  isPunchTooSoonAfterCheckIn,
 } from "@/lib/open-shift-cap";
 
 /**
@@ -50,7 +51,9 @@ export type PunchOutcome =
   | { action: "check-out"; recordId: string }
   // repeatOf (Step 31): which side of that record this punch repeated — an
   // exact resend, or a repeat press within REPEAT_PUNCH_WINDOW_MS.
-  | { action: "duplicate"; recordId: string; repeatOf: "check-in" | "check-out" };
+  | { action: "duplicate"; recordId: string; repeatOf: "check-in" | "check-out" }
+  // Step 33: too soon after the open shift's check-in to be its check-out.
+  | { action: "ignored"; recordId: string; checkInAt: Date; minShiftMinutes: number };
 
 /**
  * ALL of the worker's currently-open records — regardless of workDate.
@@ -72,6 +75,44 @@ async function findOpenRecords(workerId: string) {
         eq(attendanceRecords.status, "present")
       )
     );
+}
+
+/**
+ * Records an ignored punch once — a bridge resend of the same punch must not
+ * log it twice.
+ */
+async function logIgnoredPunch(
+  recordId: string,
+  checkInAt: Date,
+  punchAt: Date,
+  minShiftMinutes: number
+) {
+  const punchIso = punchAt.toISOString();
+  const [existing] = await db
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .where(
+      and(
+        eq(auditLog.action, "short_punch_ignored"),
+        eq(auditLog.entityId, recordId),
+        sql`${auditLog.afterJson}->>'punchAt' = ${punchIso}`
+      )
+    )
+    .limit(1);
+  if (existing) return;
+
+  await db.insert(auditLog).values({
+    actorUserId: null,
+    action: "short_punch_ignored",
+    entityType: "attendance_record",
+    entityId: recordId,
+    beforeJson: { checkInAt: checkInAt.toISOString() },
+    afterJson: {
+      punchAt: punchIso,
+      minutesAfterCheckIn: Math.round((punchAt.getTime() - checkInAt.getTime()) / 60_000),
+      minShiftMinutes,
+    },
+  });
 }
 
 async function shiftDataFor(shiftId: string | null): Promise<ShiftData | null> {
@@ -112,6 +153,10 @@ async function shiftDataFor(shiftId: string | null): Promise<ShiftData | null> {
  *   picked up again by a later punch. Of whatever open records remain (not
  *   stale), the single most recent is the one this punch closes as a
  *   checkout; if none remain, this punch becomes a new check-in.
+ * - (Step 33) If that most recent open record was checked in less than
+ *   minShiftMinutes ago, the punch is ignored instead — logged to audit_log
+ *   as "short_punch_ignored" (shown on the Attendance page) so a genuine
+ *   early departure can be corrected by hand.
  */
 export async function resolvePunch(
   worker: PunchWorkerContext,
@@ -173,6 +218,18 @@ export async function resolvePunch(
 
     if (current) {
       const open = openRecords.find((r) => r.id === current)!;
+
+      const minShiftMinutes = await getMinShiftMinutes();
+      if (isPunchTooSoonAfterCheckIn(open.checkInAt!, timestamp, minShiftMinutes)) {
+        await logIgnoredPunch(open.id, open.checkInAt!, timestamp, minShiftMinutes);
+        return {
+          action: "ignored",
+          recordId: open.id,
+          checkInAt: open.checkInAt!,
+          minShiftMinutes,
+        };
+      }
+
       const shiftData = await shiftDataFor(open.resolvedShiftId);
       const flags = shiftData
         ? computeAllFlags(open.checkInAt!, timestamp, shiftData, open.workDate, now)

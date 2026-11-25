@@ -17,6 +17,7 @@ import {
   findDuplicateRecord,
   findRepeatPunch,
   REPEAT_PUNCH_WINDOW_MS,
+  isPunchTooSoonAfterCheckIn,
   type DuplicateCandidateRef,
 } from "./open-shift-cap";
 
@@ -325,6 +326,75 @@ console.log("\n── Replay: Muhammad Sami's 6 presses (2026-11-25), Step 31 ru
     recs.length === 1 && recs[0].checkOutAt?.getTime() === d("2026-11-25T15:30:00").getTime());
   assert("a repeat press right after the check-out is ignored too",
     outcomes.slice(-2).join(",") === "check-out,duplicate");
+}
+
+
+console.log("\n── isPunchTooSoonAfterCheckIn (Step 33 minimum shift) ──");
+
+{
+  const cin = d("2026-11-25T00:19:30"); // 05:19:30 PKT
+  const m = (n: number) => new Date(cin.getTime() + n * 60_000);
+  assert("16 min after check-in is too soon (SUB-035's 05:35)", isPunchTooSoonAfterCheckIn(cin, m(16), 60) === true);
+  assert("45 min after check-in is too soon (SUB-033's 05:34)", isPunchTooSoonAfterCheckIn(cin, m(45), 60) === true);
+  assert("59.9 min is too soon", isPunchTooSoonAfterCheckIn(cin, new Date(m(60).getTime() - 6_000), 60) === true);
+  assert("exactly 60 min counts as a check-out", isPunchTooSoonAfterCheckIn(cin, m(60), 60) === false);
+  assert("8 h later is a normal check-out", isPunchTooSoonAfterCheckIn(cin, m(480), 60) === false);
+  assert("0 disables the rule", isPunchTooSoonAfterCheckIn(cin, m(5), 0) === false);
+  assert("a punch before the check-in is not 'too soon'", isPunchTooSoonAfterCheckIn(cin, m(-10), 60) === false);
+}
+
+console.log("\n── Replay with Step 33 rules (repeat 5 min + min shift 60 min + 14h cap) ──");
+
+{
+  // Same decision order as resolvePunch(): repeat check, stale close,
+  // too-soon check against the current open record, then close or open.
+  type R = { id: string; checkInAt: Date; checkOutAt: Date | null; status: string };
+  const replay = (punches: Date[], minShift = 60) => {
+    const recs: R[] = [];
+    const outcomes: string[] = [];
+    for (const t of punches) {
+      if (findRepeatPunch(recs, t, REPEAT_PUNCH_WINDOW_MS)) { outcomes.push("duplicate"); continue; }
+      const open = recs.filter((r) => !r.checkOutAt && r.status === "present");
+      const { toClose, current } = resolveOpenRecords(open, t, DEFAULT_CAP);
+      for (const id of toClose) recs.find((r) => r.id === id)!.status = "incomplete";
+      if (current) {
+        const rec = recs.find((r) => r.id === current)!;
+        if (isPunchTooSoonAfterCheckIn(rec.checkInAt, t, minShift)) { outcomes.push("ignored"); continue; }
+        rec.checkOutAt = t;
+        outcomes.push("check-out");
+        continue;
+      }
+      recs.push({ id: `r${recs.length + 1}`, checkInAt: t, checkOutAt: null, status: "present" });
+      outcomes.push("check-in");
+    }
+    return { recs, outcomes };
+  };
+
+  // SUB-035 on 2026-11-25 (PKT 05:19:30, 05:35:36, 13:57:20).
+  const amir = replay([d("2026-11-25T00:19:30"), d("2026-11-25T00:35:36"), d("2026-11-25T08:57:20")]);
+  assert("SUB-035: early second scan ignored, real check-out closes the shift",
+    amir.outcomes.join(",") === "check-in,ignored,check-out" &&
+      amir.recs.length === 1 &&
+      amir.recs[0].checkOutAt?.getTime() === d("2026-11-25T08:57:20").getTime());
+  const oldAmir = replay([d("2026-11-25T00:19:30"), d("2026-11-25T00:35:36"), d("2026-11-25T08:57:20")], 0);
+  assert("same punches without the rule → 16-min shift + phantom 2nd record (the bug)",
+    oldAmir.recs.length === 2 && oldAmir.outcomes[1] === "check-out");
+
+  // Bilal SUB-066-style long shift: 14:20 → 02:22 PKT (12h02m) — beyond the
+  // 11h warning, inside the 14h pairing limit, so the check-out still closes it.
+  const bilal = replay([d("2026-11-23T09:20:00"), d("2026-11-23T21:22:00")]);
+  assert("12h shift: check-out still closes it (14h limit unchanged)",
+    bilal.outcomes.join(",") === "check-in,check-out" && bilal.recs.length === 1);
+
+  // Sami's 6 presses still collapse via the 5-min repeat rule.
+  const sami = replay(["24", "26", "27", "28", "30", "31"].map((s) => d(`2026-11-25T07:45:${s}`)));
+  assert("6 presses in 7 s → 1 check-in + 5 duplicates (repeat rule still first)",
+    sami.outcomes.join(",") === "check-in,duplicate,duplicate,duplicate,duplicate,duplicate");
+
+  // A genuine new check-in after a check-out is never blocked by the rule.
+  const dbl = replay([d("2026-11-25T00:00:00"), d("2026-11-25T08:00:00"), d("2026-11-25T08:20:00")]);
+  assert("punch 20 min after a CHECK-OUT starts a new shift (rule only guards open shifts)",
+    dbl.outcomes.join(",") === "check-in,check-out,check-in");
 }
 
 console.log("\n" + "─".repeat(48));

@@ -6,18 +6,19 @@ import {
   departments,
   workers,
   accessScopes,
-  shifts,
   attendanceRecords,
 } from "@/db/schema";
 import { eq, and, count, inArray } from "drizzle-orm";
 import { Building2, Layers, Users, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { flagMissingCheckout, type ShiftData } from "@/lib/attendance";
+import { isCheckoutOverdue } from "@/lib/attendance";
+import { pktDateStr } from "@/lib/pkt-time";
 import {
   getPayrollCutoffTime,
   getBiometricSyncStatus,
   getUnmatchedDeviceIds,
+  getMissingCheckoutHours,
 } from "@/lib/settings";
 import { computePayrollForWorkers, STATUS_MULTIPLIER } from "@/lib/payroll-report";
 
@@ -87,7 +88,8 @@ export default async function DashboardPage() {
   ];
 
   // ── Today strip: scoped to what this user can see ────────────────────────────
-  const today = new Date().toISOString().slice(0, 10);
+  // Step 33: Pakistan date (was the UTC date — wrong 00:00–05:00 PKT).
+  const today = pktDateStr(new Date());
   const isAdmin = session.user.role === "admin";
 
   let allowedDeptIds: string[];
@@ -156,17 +158,9 @@ export default async function DashboardPage() {
     recordsByWorker.get(r.workerId)!.push(r);
   }
 
-  const shiftIds = new Set<string>();
-  records.forEach((r) => { if (r.resolvedShiftId) shiftIds.add(r.resolvedShiftId); });
-
-  const shiftRows =
-    shiftIds.size > 0
-      ? await db
-          .select()
-          .from(shifts)
-          .where(inArray(shifts.id, Array.from(shiftIds)))
-      : [];
-  const shiftMap = new Map(shiftRows.map((s) => [s.id, s]));
+  // Step 33: missing checkout is judged by time since check-in, so the
+  // shifts lookup this used to need is gone.
+  const missingCheckoutHours = await getMissingCheckoutHours();
 
   // Payable figure uses the Step 18 closing-window model (not calendar day) so
   // it matches what the Payroll page would show for a closing run today.
@@ -211,19 +205,6 @@ export default async function DashboardPage() {
   let missingCheckoutToday = 0;
   let payableToday = 0;
 
-  function toShiftData(shiftId: string | null): ShiftData | null {
-    const row = shiftId ? shiftMap.get(shiftId) : null;
-    return row
-      ? {
-          startTime: row.startTime,
-          endTime: row.endTime,
-          graceMinutes: row.graceMinutes,
-          earlyLeaveGraceMinutes: row.earlyLeaveGraceMinutes,
-          crossesMidnight: row.crossesMidnight,
-        }
-      : null;
-  }
-
   for (const w of scopedWorkers) {
     // Present/absent are per-WORKER (a double shift is still one present
     // person); late/missing-checkout stay per-SHIFT (row-level).
@@ -234,10 +215,11 @@ export default async function DashboardPage() {
     for (const record of recs) {
       if (record.isLate) lateToday++;
 
-      const shiftData = toShiftData(record.resolvedShiftId);
+      // Step 33: same rule as the Attendance page — open for
+      // missingCheckoutHours since check-in.
       const checkoutMissing =
-        record.checkInAt && !record.checkOutAt && shiftData
-          ? flagMissingCheckout(record.checkInAt, null, shiftData, today, now)
+        record.status === "present" && record.checkInAt && !record.checkOutAt
+          ? isCheckoutOverdue(record.checkInAt, null, now, missingCheckoutHours)
           : record.checkoutMissing;
       if (checkoutMissing) missingCheckoutToday++;
     }

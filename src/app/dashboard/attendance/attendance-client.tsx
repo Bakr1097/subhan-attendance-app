@@ -56,6 +56,8 @@ export interface AttendanceEntry {
   overtimeMinutes: number;
   workedMinutes: number | null;
   checkoutMissing: boolean;
+  /** Step 33: ISO times of punches ignored by the minimum-shift rule. */
+  ignoredPunches: string[];
 }
 
 interface Terminal {
@@ -64,6 +66,20 @@ interface Terminal {
 }
 
 // ─── Formatting helpers ────────────────────────────────────────────────────────
+
+/** Step 33: "punch ignored at 05:34" under the check-out — so a genuine early
+ *  departure the minimum-shift rule swallowed can be corrected by hand. */
+function IgnoredPunchNote({ punches }: { punches: string[] }) {
+  if (punches.length === 0) return null;
+  return (
+    <span
+      className="block text-xs text-slate-500"
+      title="Too soon after check-in to count as a check-out. If the worker really left, correct the times."
+    >
+      punch ignored at {punches.map((p) => fmtTime(p)).join(", ")}
+    </span>
+  );
+}
 
 function fmtTime(iso: string | null): string {
   if (!iso) return "—";
@@ -794,6 +810,7 @@ export function AttendanceClient({
                             )}
                           </div>
                         )}
+                        <IgnoredPunchNote punches={entry.ignoredPunches} />
                       </TableCell>
 
                       <TableCell>
@@ -915,6 +932,7 @@ export function AttendanceClient({
                           )}
                         </>
                       )}
+                      <IgnoredPunchNote punches={entry.ignoredPunches} />
                     </div>
                   </div>
 

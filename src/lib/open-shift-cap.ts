@@ -138,3 +138,23 @@ export function findRepeatPunch(
   }
   return best ? { recordId: best.recordId, kind: best.kind } : null;
 }
+
+/**
+ * Step 33: minimum shift length. While a worker has an open shift, a punch
+ * less than `minShiftMinutes` after that shift's check-in is ignored rather
+ * than closing it. Two scans 16–45 minutes apart (SUB-035 / SUB-033 on
+ * 2026-11-25) otherwise paired as a short "shift", and the real check-out
+ * hours later became a new check-in — a phantom Double in payroll.
+ *
+ * 0 disables the rule. A punch before the check-in (age < 0) is not "too
+ * soon" — that's left to the existing logic.
+ */
+export function isPunchTooSoonAfterCheckIn(
+  openCheckInAt: Date,
+  punchTimestamp: Date,
+  minShiftMinutes: number
+): boolean {
+  if (minShiftMinutes <= 0) return false;
+  const minutes = (punchTimestamp.getTime() - openCheckInAt.getTime()) / 60_000;
+  return minutes >= 0 && minutes < minShiftMinutes;
+}

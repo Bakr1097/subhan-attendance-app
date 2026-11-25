@@ -48,3 +48,35 @@ export async function updateKioskRefreshMinutes(value: number) {
   revalidatePath("/dashboard/settings");
   revalidatePath("/kiosk");
 }
+
+// Step 33: a punch this soon after an open check-in is ignored. 0 turns it off.
+export async function updateMinShiftMinutes(value: number) {
+  const session = await auth();
+  if (!session) throw new Error("Unauthorized");
+  if (session.user.role !== "admin") throw new Error("Unauthorized");
+
+  if (!Number.isInteger(value) || value < 0 || value > 240) {
+    throw new Error("Minimum shift length must be a whole number between 0 and 240");
+  }
+
+  await setSetting("minShiftMinutes", String(value));
+
+  revalidatePath("/dashboard/settings");
+}
+
+// Step 33: an open check-in shows "missing checkout" after this many hours.
+export async function updateMissingCheckoutHours(value: number) {
+  const session = await auth();
+  if (!session) throw new Error("Unauthorized");
+  if (session.user.role !== "admin") throw new Error("Unauthorized");
+
+  if (!Number.isInteger(value) || value < 1 || value > 24) {
+    throw new Error("Missing checkout warning must be a whole number between 1 and 24");
+  }
+
+  await setSetting("missingCheckoutHours", String(value));
+
+  revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/attendance");
+  revalidatePath("/dashboard");
+}

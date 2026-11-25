@@ -219,6 +219,24 @@ export function flagMissingCheckout(
   return now > shiftEnd;
 }
 
+/**
+ * Step 33: "missing checkout" warning by time since check-in, not shift end.
+ * Configured shift times don't match when people actually work, so the
+ * shift-end rule above flagged the wrong rows. An open check-in is overdue
+ * once it has been open `afterHours` hours. Independent of
+ * maxOpenShiftHours (the pairing limit), which stays higher so a long but
+ * genuine shift can still be closed by its check-out.
+ */
+export function isCheckoutOverdue(
+  checkInAt: Date | null,
+  checkOutAt: Date | null,
+  now: Date,
+  afterHours: number
+): boolean {
+  if (!checkInAt || checkOutAt) return false;
+  return now.getTime() - checkInAt.getTime() >= afterHours * 3_600_000;
+}
+
 // ---------------------------------------------------------------------------
 // 7. countDaysWorked
 // ---------------------------------------------------------------------------

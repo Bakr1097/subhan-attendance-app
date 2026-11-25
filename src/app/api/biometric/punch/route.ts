@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
   let checkedIn = 0;
   let checkedOut = 0;
   let duplicates = 0;
+  let ignored = 0;
   const alreadyComplete = 0;
   const unmatched: string[] = [];
   // Unknown device IDs with a valid timestamp, kept for the Dashboard (Step 30).
@@ -80,6 +81,8 @@ export async function POST(req: NextRequest) {
 
     if (outcome.action === "duplicate") {
       duplicates++;
+    } else if (outcome.action === "ignored") {
+      ignored++;
     } else if (outcome.action === "check-in") {
       checkedIn++;
     } else {
@@ -96,6 +99,7 @@ export async function POST(req: NextRequest) {
     checkedIn,
     checkedOut,
     duplicates,
+    ignored,
     alreadyComplete,
     unmatched,
   });

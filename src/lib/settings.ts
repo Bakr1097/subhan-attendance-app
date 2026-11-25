@@ -6,6 +6,8 @@ const DEFAULTS: Record<string, string> = {
   payrollCutoffTime: "14:30",
   maxOpenShiftHours: "14",
   kioskRefreshMinutes: "60",
+  minShiftMinutes: "60",
+  missingCheckoutHours: "11",
 };
 
 export async function getSetting(key: string): Promise<string> {
@@ -35,6 +37,20 @@ export async function getMaxOpenShiftHours(): Promise<number> {
   const raw = await getSetting("maxOpenShiftHours");
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : 14;
+}
+
+// Step 33: a punch this soon after an open check-in is ignored (0 = off).
+export async function getMinShiftMinutes(): Promise<number> {
+  const raw = await getSetting("minShiftMinutes");
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 && n <= 240 ? n : 60;
+}
+
+// Step 33: an open check-in shows "missing checkout" after this many hours.
+export async function getMissingCheckoutHours(): Promise<number> {
+  const raw = await getSetting("missingCheckoutHours");
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 && n <= 24 ? n : 11;
 }
 
 export async function getKioskRefreshMinutes(): Promise<number> {
