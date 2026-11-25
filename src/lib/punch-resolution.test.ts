@@ -15,6 +15,9 @@ import {
   isOpenRecordStale,
   resolveOpenRecords,
   findDuplicateRecord,
+  findRepeatPunch,
+  REPEAT_PUNCH_WINDOW_MS,
+  type DuplicateCandidateRef,
 } from "./open-shift-cap";
 
 // ---------------------------------------------------------------------------
@@ -246,6 +249,82 @@ console.log("\n── findDuplicateRecord (Step 27 duplicate detection) ──")
     "a genuinely new punch with no timestamp match is not a duplicate",
     findDuplicateRecord(records, d("2024-06-05T08:00:00")) === null
   );
+}
+
+
+console.log("\n── findRepeatPunch (Step 31 repeat-press window) ──");
+
+{
+  const W = REPEAT_PUNCH_WINDOW_MS;
+  const records: DuplicateCandidateRef[] = [
+    { id: "r1", checkInAt: d("2026-11-25T07:45:24"), checkOutAt: null },
+    { id: "r0", checkInAt: d("2026-11-24T07:39:00"), checkOutAt: d("2026-11-24T08:43:00") },
+  ];
+
+  assert("window is 5 minutes", W === 5 * 60_000);
+  const m1 = findRepeatPunch(records, d("2026-11-25T07:45:26"), W);
+  assert("press 2s after a check-in is a repeat of that check-in",
+    m1?.recordId === "r1" && m1?.kind === "check-in");
+  assert("press exactly 5:00 later is still a repeat",
+    findRepeatPunch(records, d("2026-11-25T07:50:24"), W)?.recordId === "r1");
+  assert("press 5:01 later is a new punch",
+    findRepeatPunch(records, d("2026-11-25T07:50:25"), W) === null);
+  assert("press 3 min BEFORE a stored punch (out-of-order) is a repeat",
+    findRepeatPunch(records, d("2026-11-25T07:42:24"), W)?.recordId === "r1");
+  const m2 = findRepeatPunch(records, d("2026-11-24T08:44:00"), W);
+  assert("press 1 min after a check-out repeats the check-out",
+    m2?.recordId === "r0" && m2?.kind === "check-out");
+  assert("an exact resend is still caught (window ⊇ exact match)",
+    findRepeatPunch(records, d("2026-11-24T08:43:00"), W)?.recordId === "r0");
+  assert("window 0 behaves exactly like findDuplicateRecord",
+    findRepeatPunch(records, d("2026-11-25T07:45:26"), 0) === null &&
+      findRepeatPunch(records, d("2026-11-25T07:45:24"), 0)?.recordId ===
+        findDuplicateRecord(records, d("2026-11-25T07:45:24")));
+  assert("a worker with no records never matches",
+    findRepeatPunch([], d("2026-11-25T07:45:24"), W) === null);
+  const near = findRepeatPunch(
+    [
+      { id: "a", checkInAt: d("2026-11-25T08:00:00"), checkOutAt: null },
+      { id: "b", checkInAt: d("2026-11-25T08:04:00"), checkOutAt: null },
+    ],
+    d("2026-11-25T08:03:00"),
+    W
+  );
+  assert("with two candidates, the nearest stored punch wins", near?.recordId === "b");
+}
+
+console.log("\n── Replay: Muhammad Sami's 6 presses (2026-11-25), Step 31 rules ──");
+
+{
+  // Same decision order as resolvePunch(): repeat check first, then
+  // open-record resolution, else a new check-in.
+  type R = { id: string; checkInAt: Date; checkOutAt: Date | null; status: string };
+  const recs: R[] = [];
+  const outcomes: string[] = [];
+  const punch = (t: Date) => {
+    if (findRepeatPunch(recs, t, REPEAT_PUNCH_WINDOW_MS)) return outcomes.push("duplicate");
+    const open = recs.filter((r) => !r.checkOutAt && r.status === "present");
+    const { toClose, current } = resolveOpenRecords(open, t, DEFAULT_CAP);
+    for (const id of toClose) recs.find((r) => r.id === id)!.status = "incomplete";
+    if (current) {
+      recs.find((r) => r.id === current)!.checkOutAt = t;
+      return outcomes.push("check-out");
+    }
+    recs.push({ id: `r${recs.length + 1}`, checkInAt: t, checkOutAt: null, status: "present" });
+    return outcomes.push("check-in");
+  };
+
+  for (const sec of ["24", "26", "27", "28", "30", "31"]) punch(d(`2026-11-25T07:45:${sec}`));
+  assert("6 presses in 7 seconds → 1 check-in + 5 ignored",
+    outcomes.join(",") === "check-in,duplicate,duplicate,duplicate,duplicate,duplicate");
+  assert("exactly one record exists after the presses", recs.length === 1);
+
+  punch(d("2026-11-25T15:30:00"));
+  punch(d("2026-11-25T15:31:10"));
+  assert("the real check-out 8h later closes that record",
+    recs.length === 1 && recs[0].checkOutAt?.getTime() === d("2026-11-25T15:30:00").getTime());
+  assert("a repeat press right after the check-out is ignored too",
+    outcomes.slice(-2).join(",") === "check-out,duplicate");
 }
 
 console.log("\n" + "─".repeat(48));

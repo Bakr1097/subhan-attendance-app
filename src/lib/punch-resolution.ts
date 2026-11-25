@@ -9,7 +9,11 @@ import {
 } from "@/lib/attendance";
 import { resolveShiftForWorker } from "@/lib/shift-resolution";
 import { getMaxOpenShiftHours } from "@/lib/settings";
-import { resolveOpenRecords, findDuplicateRecord } from "@/lib/open-shift-cap";
+import {
+  resolveOpenRecords,
+  findRepeatPunch,
+  REPEAT_PUNCH_WINDOW_MS,
+} from "@/lib/open-shift-cap";
 
 /**
  * Shared punch-resolution logic (Step 19) used by both the kiosk
@@ -44,7 +48,9 @@ export interface PunchOptions {
 export type PunchOutcome =
   | { action: "check-in"; recordId: string }
   | { action: "check-out"; recordId: string }
-  | { action: "duplicate"; recordId: string };
+  // repeatOf (Step 31): which side of that record this punch repeated — an
+  // exact resend, or a repeat press within REPEAT_PUNCH_WINDOW_MS.
+  | { action: "duplicate"; recordId: string; repeatOf: "check-in" | "check-out" };
 
 /**
  * ALL of the worker's currently-open records — regardless of workDate.
@@ -96,6 +102,8 @@ async function shiftDataFor(shiftId: string | null): Promise<ShiftData | null> {
  *   whichever record a lookup happened to return. This is what lets the
  *   biometric bridge safely resend a batch after a partial sync failure
  *   (Step 20), regardless of how many open records the worker has.
+ * - (Step 31) That check is widened to REPEAT_PUNCH_WINDOW_MS (5 min) either
+ *   side of any stored punch, so repeated presses count once.
  * - (Step 24 + 27) Every one of the worker's open records whose checkInAt is
  *   more than `maxOpenShiftHours` before this punch is too old to plausibly
  *   be this punch's checkout (most likely a forgotten checkout). Each such
@@ -111,7 +119,8 @@ export async function resolvePunch(
   timestamp: Date,
   options: PunchOptions = {}
 ): Promise<PunchOutcome> {
-  // Duplicate check first, independent of open-record state (Step 27).
+  // Duplicate / repeat-press check first, independent of open-record state
+  // (Step 27; widened to a 5-minute window in Step 31).
   const workerRecords = await db
     .select({
       id: attendanceRecords.id,
@@ -121,9 +130,9 @@ export async function resolvePunch(
     .from(attendanceRecords)
     .where(eq(attendanceRecords.workerId, worker.id));
 
-  const duplicateId = findDuplicateRecord(workerRecords, timestamp);
-  if (duplicateId) {
-    return { action: "duplicate", recordId: duplicateId };
+  const repeat = findRepeatPunch(workerRecords, timestamp, REPEAT_PUNCH_WINDOW_MS);
+  if (repeat) {
+    return { action: "duplicate", recordId: repeat.recordId, repeatOf: repeat.kind };
   }
 
   const openRecords = await findOpenRecords(worker.id);

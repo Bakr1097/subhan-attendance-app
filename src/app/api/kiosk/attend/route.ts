@@ -82,7 +82,10 @@ export async function POST(req: NextRequest) {
   );
 
   return NextResponse.json({
-    action: outcome.action,
+    // Step 31: a repeat press within 5 minutes is ignored server-side; show
+    // the worker the same result as their original press so the kiosk tile
+    // doesn't flip state.
+    action: outcome.action === "duplicate" ? outcome.repeatOf : outcome.action,
     workerName: worker.fullName,
     timestamp: timeStr,
   });
